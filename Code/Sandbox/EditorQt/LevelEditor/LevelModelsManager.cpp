@@ -5,6 +5,7 @@
 #include "ProxyModels/MergingProxyModel.h"
 #include "ProxyModels/MountingProxyModel.h"
 #include "ProxyModels/ItemModelAttribute.h"
+#include "VersionControl/UI/VersionControlUIHelper.h"
 
 #include "Objects/ObjectLayerManager.h"
 #include "IEditorImpl.h"
@@ -39,6 +40,7 @@ enum EFullLevelColumns
 	eFullLevelColumns_LoadedByDefault,
 	eFullLevelColumns_HasPhysics,
 	eFullLevelColumns_Platform,
+	eFullLevelColumns_LinkedTo,
 	eFullLevelColumns_Size
 };
 
@@ -61,7 +63,7 @@ static CItemModelAttribute* FullLevel_GetColumnAttribute(int column)
 	case eFullLevelColumns_Frozen:
 		return &LevelModelsAttributes::s_frozenAttribute;
 	case eFullLevelColumns_VCS:
-		return &LevelModelsAttributes::s_vcsAttribute;
+		return VersionControlUIHelper::GetVCSStatusAttribute();
 	case eFullLevelColumns_DefaultMaterial:
 		return &LevelModelsAttributes::s_defaultMaterialAttribute;
 	case eFullLevelColumns_CustomMaterial:
@@ -92,6 +94,8 @@ static CItemModelAttribute* FullLevel_GetColumnAttribute(int column)
 		return &LevelModelsAttributes::s_HasPhysicsAttribute;
 	case eFullLevelColumns_Platform:
 		return &LevelModelsAttributes::s_PlatformAttribute;
+	case eFullLevelColumns_LinkedTo:
+		return &LevelModelsAttributes::s_linkedToAttribute;
 	default:
 		return nullptr;
 	}
@@ -159,6 +163,7 @@ static QVariant FullLevel_GetHeaderData(int section, Qt::Orientation orientation
 		case eFullLevelColumns_LODCount:
 		case eFullLevelColumns_MinSpec:
 		case eFullLevelColumns_AI_GroupId:
+		case eFullLevelColumns_LinkedTo:
 			return "Objects";
 		default:
 			return "Layers";

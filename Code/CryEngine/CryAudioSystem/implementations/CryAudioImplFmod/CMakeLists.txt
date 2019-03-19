@@ -6,58 +6,50 @@ start_sources()
 sources_platform(ALL)
 add_sources("CryAudioImpl_uber_0.cpp"
 	SOURCE_GROUP "Header Files"
+		"Bank.h"
 		"BaseObject.h"
-		"BaseParameter.h"
-		"BaseStandaloneFile.h"
-		"BaseSwitchState.h"
+		"BaseTriggerConnection.h"
 		"Common.h"
 		"CVars.h"
-		"Debug.h"
-		"Environment.h"
-		"EnvironmentBus.h"
-		"EnvironmentParameter.h"
 		"Event.h"
-		"File.h"
+		"EventInstance.h"
 		"GlobalData.h"
 		"GlobalObject.h"
 		"Impl.h"
 		"Listener.h"
 		"Object.h"
 		"Parameter.h"
-		"ProgrammerSoundFile.h"
+		"ParameterEnvironment.h"
+		"ParameterState.h"
 		"resource.h"
-		"Setting.h"
-		"StandaloneFile.h"
-		"stdafx.h"
-		"SwitchState.h"
-		"Trigger.h"
-		"VcaParameter.h"
+		"Return.h"
+		"Snapshot.h"
+		"Vca.h"
 		"VcaState.h"
 	SOURCE_GROUP "Source Files"
 		"BaseObject.cpp"
-		"BaseStandaloneFile.cpp"
 		"Common.cpp"
 		"CryAudioImpl.cpp"
 		"CVars.cpp"
-		"Debug.cpp"
-		"Environment.cpp"
 		"Event.cpp"
+		"EventInstance.cpp"
 		"GlobalObject.cpp"
 		"Impl.cpp"
 		"Listener.cpp"
 		"Object.cpp"
 		"Parameter.cpp"
-		"ProgrammerSoundFile.cpp"
-		"StandaloneFile.cpp"
-		"SwitchState.cpp"
-		"Trigger.cpp"
-		"VcaParameter.cpp"
+		"ParameterEnvironment.cpp"
+		"ParameterState.cpp"
+		"Return.cpp"
+		"Snapshot.cpp"
+		"Vca.cpp"
 		"VcaState.cpp"
 )
 
 add_sources("NoUberFile"
 	SOURCE_GROUP "Root"
 		"stdafx.cpp"
+		"stdafx.h"
 )
 
 end_sources()
@@ -65,6 +57,7 @@ end_sources()
 
 if(AUDIO_FMOD)
 	CryEngineModule(CryAudioImplFmod FORCE_SHARED_WIN PCH "stdafx.cpp" SOLUTION_FOLDER "CryEngine/Audio/Implementations")
+	target_compile_definitions(${THIS_PROJECT} PRIVATE $<$<NOT:$<CONFIG:Release>>:CRY_AUDIO_IMPL_FMOD_USE_DEBUG_CODE>)
 	target_include_directories(CryAudioImplFmod PRIVATE ../../Common)
 	target_link_libraries(CryAudioImplFmod PRIVATE fmod fmodstudio)
 else()
@@ -72,38 +65,24 @@ else()
 endif()
 if (ORBIS OR CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
 	target_compile_options(${THIS_PROJECT} PRIVATE
-		-Wno-unknown-pragmas
-		-Wno-reorder
-		-Wno-parentheses
 		-Wno-format
-		-Wno-switch
-		-Wno-unused-value
-		-Wno-comment
-		-Wno-empty-body
-		-Wno-format-security
-		-Wno-unused-function
 		-Wno-multichar
+		-Wno-parentheses
+		-Wno-unknown-pragmas
+		-Wno-unused-function
 		-Wno-unused-private-field
 	)
 elseif(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
 	target_compile_options(${THIS_PROJECT} PRIVATE
-		-Wno-unused-function
-		-Wno-unused-value
-		-Wno-sign-compare
-		-Wno-ignored-attributes
-		-Wno-int-in-bool-context
-		-Wno-unused-but-set-variable
-		-Wno-misleading-indentation
-		-Wno-unknown-pragmas
-		-Wno-unused-const-variable
-		-Wno-strict-aliasing
-		-Wno-maybe-uninitialized
-		-Wno-multichar
-		-Wno-char-subscripts
-		-Wno-parentheses
-		-Wno-comment
-		-Wno-address
 		-Wno-format
-		-Wno-switch
+		-Wno-maybe-uninitialized
+		-Wno-misleading-indentation
+		-Wno-multichar
+		-Wno-parentheses
+		-Wno-sign-compare
+		-Wno-strict-aliasing
+		-Wno-unknown-pragmas
+		-Wno-unused-but-set-variable
+		-Wno-unused-function
 	)
 endif()

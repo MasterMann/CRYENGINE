@@ -161,11 +161,23 @@ void CBrush::Render(const struct SRendParams& _EntDrawParams, const SRenderingPa
 		rParms.dwFObjFlags |= FOB_DYNAMIC_OBJECT;
 	}
 
+	if (!passInfo.IsShadowPass() && !passInfo.IsRecursivePass())
+	{
+		const uint64 camTest = (ERF_HIDDEN_FROM_CAMERA);
+		if ((m_dwRndFlags & camTest) != 0)
+			return;
+	}
+
+	if (passInfo.IsRecursivePass())
+	{
+		// Nearest objects are not rendered in the recursive passes.
+		const uint64 recTest = (ERF_HIDDEN_FROM_RECURSION | ERF_FOB_NEAREST);
+		if ((m_dwRndFlags & recTest) != 0)
+			return;
+	}
+
 	if ((m_dwRndFlags & ERF_FOB_NEAREST) != 0)
 	{
-		if (passInfo.IsRecursivePass()) // Nearest objects are not rendered in the recursive passes.
-			return;
-
 		rParms.dwFObjFlags |= FOB_NEAREST;
 		if (rParms.dwFObjFlags & FOB_DYNAMIC_OBJECT)
 		{
@@ -214,8 +226,12 @@ void CBrush::SetMatrix(const Matrix34& mat)
 
 	CalcBBox();
 
-	Get3DEngine()->UnRegisterEntityAsJob(this);
-	Get3DEngine()->RegisterEntity(this);
+	// TODO: implement this on a lower level (3DEngine's registration interface) to uniformly support this across all IRenderNode implementations
+	if (!(m_dwRndFlags & ERF_NO_3DENGINE_REGISTRATION))
+	{
+		Get3DEngine()->UnRegisterEntityAsJob(this);
+		Get3DEngine()->RegisterEntity(this);
+	}
 
 	if (replacePhys)
 		Dephysicalize();
@@ -379,19 +395,17 @@ void CBrush::PhysicalizeOnHeap(IGeneralMemoryHeap* pHeap, bool bInstant)
 	params.pMtx3x4 = &mtxScale;
 	m_pStatObj->Physicalize(m_pPhysEnt, &params);
 
-	if (m_dwRndFlags & (ERF_HIDABLE | ERF_HIDABLE_SECONDARY | ERF_EXCLUDE_FROM_TRIANGULATION | ERF_NODYNWATER))
-	{
+	{ // Update foreign data flags based on render flags
 		pe_params_foreign_data foreignData;
-		m_pPhysEnt->GetParams(&foreignData);
+		foreignData.iForeignFlagsAND = ~(PFF_HIDABLE | PFF_HIDABLE_SECONDARY | PFF_EXCLUDE_FROM_STATIC | PFF_OUTDOOR_AREA);
 		if (m_dwRndFlags & ERF_HIDABLE)
-			foreignData.iForeignFlags |= PFF_HIDABLE;
+			foreignData.iForeignFlagsOR |= PFF_HIDABLE;
 		if (m_dwRndFlags & ERF_HIDABLE_SECONDARY)
-			foreignData.iForeignFlags |= PFF_HIDABLE_SECONDARY;
-		//[PETAR] new flag to exclude from triangulation
+			foreignData.iForeignFlagsOR |= PFF_HIDABLE_SECONDARY;
 		if (m_dwRndFlags & ERF_EXCLUDE_FROM_TRIANGULATION)
-			foreignData.iForeignFlags |= PFF_EXCLUDE_FROM_STATIC;
+			foreignData.iForeignFlagsOR |= PFF_EXCLUDE_FROM_STATIC;
 		if (m_dwRndFlags & ERF_NODYNWATER)
-			foreignData.iForeignFlags |= PFF_OUTDOOR_AREA;
+			foreignData.iForeignFlagsOR |= PFF_OUTDOOR_AREA;
 		m_pPhysEnt->SetParams(&foreignData);
 	}
 
@@ -707,7 +721,7 @@ void CBrush::SetLayerId(uint16 nLayerId)
 	InvalidatePermanentRenderObject();
 }
 
-IRenderMesh* CBrush::GetRenderMesh(int nLod)
+IRenderMesh* CBrush::GetRenderMesh(int nLod) const
 {
 	IStatObj* pStatObj = m_pStatObj ? m_pStatObj->GetLodObject(nLod) : NULL;
 	return pStatObj ? pStatObj->GetRenderMesh() : NULL;
@@ -806,15 +820,27 @@ void CBrush::Render(const CLodValue& lodValue, const SRenderingPassInfo& passInf
 	   }
 	 */
 
+	if (!passInfo.IsShadowPass() && !passInfo.IsRecursivePass())
+	{
+		const uint64 camTest = (ERF_HIDDEN_FROM_CAMERA);
+		if ((m_dwRndFlags & camTest) != 0)
+			return;
+	}
+
+	if (passInfo.IsRecursivePass())
+	{
+		// Nearest objects are not rendered in the recursive passes.
+		const uint64 recTest = (ERF_HIDDEN_FROM_RECURSION | ERF_FOB_NEAREST);
+		if ((m_dwRndFlags & recTest) != 0)
+			return;
+	}
+
 	const uint8 nMaterialLayers = IRenderNode::GetMaterialLayers();
 	Matrix34 transformMatrix = m_Matrix;
 	const Vec3 vCamPos = passInfo.GetCamera().GetPosition();
 	bool isNearestObject = (GetRndFlags() & ERF_FOB_NEAREST) != 0;
 	if (isNearestObject)
 	{
-		if (passInfo.IsRecursivePass()) // Nearest objects are not rendered in the recursive passes.
-			return;
-
 		bool isNearestShadowPass = passInfo.IsShadowPass() && passInfo.GetIRenderView()->GetShadowFrustumOwner()->m_eFrustumType == ShadowMapFrustum::e_Nearest;
 		if (passInfo.IsGeneralPass() || isNearestShadowPass)
 		{
@@ -1003,7 +1029,7 @@ void CBrush::Render(const CLodValue& lodValue, const SRenderingPassInfo& passInf
 
 		if (lodValue.LodA() <= 0 && Cry3DEngineBase::GetCVars()->e_MergedMeshes != 0 && m_pDeform && m_pDeform->HasDeformableData())
 		{
-			if (Get3DEngine()->IsStatObjBufferRenderTasksAllowed() && passInfo.IsGeneralPass() && JobManager::InvokeAsJob("CheckOcclusion"))
+			if (Get3DEngine()->IsStatObjBufferRenderTasksAllowed() && passInfo.IsGeneralPass())
 			{
 				GetObjManager()->PushIntoCullOutputQueue(SCheckOcclusionOutput::CreateDeformableBrushOutput(this, gEnv->pRenderer->EF_DuplicateRO(pObj, passInfo), lodValue.LodA(), passInfo));
 			}
@@ -1076,7 +1102,7 @@ void CBrush::InvalidatePermanentRenderObjectMatrix()
 }
 
 ///////////////////////////////////////////////////////////////////////////////
-bool CBrush::CanExecuteRenderAsJob()
+bool CBrush::CanExecuteRenderAsJob() const
 {
 	return (GetCVars()->e_ExecuteRenderAsJobMask & BIT(GetRenderNodeType())) != 0 &&
 	       (m_dwRndFlags & ERF_RENDER_ALWAYS) == 0;
@@ -1089,19 +1115,7 @@ void CBrush::DisablePhysicalization(bool bDisable)
 }
 
 ///////////////////////////////////////////////////////////////////////////////
-void CBrush::FillBBox(AABB& aabb)
-{
-	aabb = CBrush::GetBBox();
-}
-
-///////////////////////////////////////////////////////////////////////////////
-EERType CBrush::GetRenderNodeType()
-{
-	return eERType_Brush;
-}
-
-///////////////////////////////////////////////////////////////////////////////
-float CBrush::GetMaxViewDist()
+float CBrush::GetMaxViewDist() const
 {
 	if (GetRndFlags() & ERF_FORCE_POST_3D_RENDER)
 	{

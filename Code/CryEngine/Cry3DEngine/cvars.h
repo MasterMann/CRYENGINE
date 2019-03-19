@@ -1,18 +1,6 @@
 // Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
-// -------------------------------------------------------------------------
-//  File name:   cvars.h
-//  Version:     v1.00
-//  Created:     28/5/2001 by Vladimir Kajalin
-//  Compilers:   Visual Studio.NET
-//  Description:
-// -------------------------------------------------------------------------
-//  History:
-//
-////////////////////////////////////////////////////////////////////////////
-
-#ifndef _3DENGINE_CVARS_H_
-#define _3DENGINE_CVARS_H_
+#pragma once
 
 #if defined(CONSOLE_CONST_CVAR_MODE)
 	#define GetFloatCVar(name) name ## Default
@@ -121,7 +109,6 @@ struct CVars : public Cry3DEngineBase
 
 	int    e_PermanentRenderObjects;
 	int    e_TerrainTextureStreamingPoolItemsNum;
-	int    e_ParticlesPoolSize;
 	int    e_ParticlesVertexPoolSize;
 	int    e_ParticlesIndexPoolSize;
 	int    e_ParticlesProfile;
@@ -265,7 +252,6 @@ struct CVars : public Cry3DEngineBase
 	int   e_StreamInstancesMaxTasks;
 	float e_StreamInstancesDistRatio;
 	int   e_CheckOcclusion;
-	int   e_CheckOcclusionQueueSize;
 	int   e_CheckOcclusionOutputQueueSize;
 	DeclareConstIntCVar(e_WaterVolumes, e_WaterVolumesDefault);
 	DeclareConstFloatCVar(e_TerrainOcclusionCullingPrecisionDistRatio);
@@ -288,8 +274,7 @@ struct CVars : public Cry3DEngineBase
 	DeclareConstFloatCVar(e_DecalsPlacementTestMinDepth);
 	DeclareConstFloatCVar(e_CameraRotationSpeed);
 	float  e_ScreenShotMapSizeY;
-	int    e_GI;
-	DeclareConstIntCVar(e_PortalsBigEntitiesFix, 1);
+	DeclareConstIntCVar(e_PortalsBigEntitiesFix, 0);
 	int    e_SQTestBegin;
 	int    e_VegetationSprites;
 	ICVar* e_CameraGoto;
@@ -302,6 +287,7 @@ struct CVars : public Cry3DEngineBase
 	DeclareConstIntCVar(e_RenderMeshUpdateAsync, 1);
 	int   e_ParticlesPreload;
 	int   e_ParticlesAllowRuntimeLoad;
+	int   e_ParticlesPrecacheAssets;
 	int   e_ParticlesConvertPfx1;
 	DeclareConstIntCVar(e_ParticlesSerializeNamedFields, 1);
 	float e_CoverageBufferOccludersViewDistRatio; // TODO: make use of this cvar
@@ -462,7 +448,6 @@ struct CVars : public Cry3DEngineBase
 	DeclareConstFloatCVar(e_LodCompMaxSize);
 	float e_ViewDistRatioDetail;
 	DeclareConstIntCVar(e_TerrainDetailMaterialsDebug, 0);
-	DeclareConstIntCVar(e_Sleep, 0);
 	DeclareConstIntCVar(e_TerrainOcclusionCullingStepSize, 4);
 	int   e_Wind;
 	int   e_SQTestMip;
@@ -549,5 +534,3 @@ struct CVars : public Cry3DEngineBase
 	#include "SVO/SceneTreeCVars.inl" // include SVO related variables
 #endif
 };
-
-#endif // _3DENGINE_CVARS_H_

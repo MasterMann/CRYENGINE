@@ -28,7 +28,7 @@ public:
 	virtual ~CImpl() override;
 
 	// IImpl
-	virtual void           Initialize(SImplInfo& implInfo, Platforms const& platforms) override;
+	virtual void           Initialize(SImplInfo& implInfo, ExtensionFilterVector& extensionFilters, QStringList& supportedFileTypes) override;
 	virtual QWidget*       CreateDataPanel() override;
 	virtual void           DestroyDataPanel() override;
 	virtual void           Reload(SImplInfo& implInfo) override;
@@ -40,16 +40,21 @@ public:
 	virtual EAssetType     ImplTypeToAssetType(IItem const* const pIItem) const override;
 	virtual IConnection*   CreateConnectionToControl(EAssetType const assetType, IItem const* const pIItem) override;
 	virtual IConnection*   CreateConnectionFromXMLNode(XmlNodeRef pNode, EAssetType const assetType) override;
-	virtual XmlNodeRef     CreateXMLNodeFromConnection(IConnection const* const pIConnection, EAssetType const assetType) override;
-	virtual XmlNodeRef     SetDataNode(char const* const szTag) override;
+	virtual XmlNodeRef     CreateXMLNodeFromConnection(IConnection const* const pIConnection, EAssetType const assetType, CryAudio::ContextId const contextId) override;
+	virtual XmlNodeRef     SetDataNode(char const* const szTag, CryAudio::ContextId const contextId) override;
+	virtual void           OnBeforeWriteLibrary() override;
+	virtual void           OnAfterWriteLibrary() override;
 	virtual void           EnableConnection(IConnection const* const pIConnection, bool const isLoading) override;
 	virtual void           DisableConnection(IConnection const* const pIConnection, bool const isLoading) override;
 	virtual void           DestructConnection(IConnection const* const pIConnection) override;
 	virtual void           OnBeforeReload() override;
 	virtual void           OnAfterReload() override;
 	virtual void           OnSelectConnectedItem(ControlId const id) const override;
-	virtual void           OnFileImporterOpened() override {}
-	virtual void           OnFileImporterClosed() override {}
+	virtual void           OnFileImporterOpened() override                                                                 {}
+	virtual void           OnFileImporterClosed() override                                                                 {}
+	virtual bool           CanDropExternalData(QMimeData const* const pData) const override                                { return false; }
+	virtual bool           DropExternalData(QMimeData const* const pData, FileImportInfos& fileImportInfos) const override { return false; }
+	virtual ControlId      GenerateItemId(QString const& name, QString const& path, bool const isLocalized) override       { return g_invalidControlId; }
 	// ~IImpl
 
 	CItem const& GetRootItem() const { return m_rootItem; }
@@ -71,7 +76,7 @@ private:
 
 	using ConnectionIds = std::map<ControlId, int>;
 
-	CItem             m_rootItem { "", s_aceInvalidId, EItemType::None };
+	CItem             m_rootItem { "", g_invalidControlId, EItemType::None };
 	ItemCache         m_itemCache;   // cache of the items stored by id for faster access
 	ConnectionIds     m_connectionsByID;
 	CDataPanel*       m_pDataPanel;

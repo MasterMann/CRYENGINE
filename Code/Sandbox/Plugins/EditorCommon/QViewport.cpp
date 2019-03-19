@@ -101,7 +101,6 @@ void QViewport::CreateGridLines(const uint count, const uint interStepCount, con
 	const float alphaMulMain = (float)gridSettings.mainColor.a;
 	const float alphaMulInter = (float)gridSettings.middleColor.a;
 	const float alphaFalloff = 1.0f - (gridSettings.alphaFalloff / 100.0f);
-	float orthoWeight = 1.0f;
 
 	for (int i = 0; i < count + 2; i++)
 	{
@@ -811,6 +810,7 @@ void QViewport::Render(SDisplayContext& context)
 	}
 
 	passInfo.GetIRenderView()->SetShaderRenderingFlags(SHDF_ALLOWHDR | SHDF_SECONDARY_VIEWPORT);
+	// In EF_StartEf(), usage mode is switched to CRenderView::eUsageModeWriting. Thus, render item lists are added below.
 	m_env->pRenderer->EF_StartEf(passInfo);
 
 	SRendParams rp;
@@ -876,6 +876,11 @@ void QViewport::Render(SDisplayContext& context)
 	m_gizmoManager.Display(context);
 
 	m_env->pSystem->GetIPhysicsDebugRenderer()->Flush(m_lastFrameTime);
+
+	for (size_t i = 0; i < m_consumers.size(); ++i)
+		m_consumers[i]->OnViewportRender(rc);
+
+	// In EF_EndEf3D(), usage mode is switched to CRenderView::eUsageModeWritingDone - indicating the end of adding render item lists.
 	m_env->pRenderer->EF_EndEf3D(-1, -1, passInfo);
 
 	if (m_settings->grid.showGrid)
@@ -897,9 +902,6 @@ void QViewport::Render(SDisplayContext& context)
 		DrawOrigin(50, m_height - 50, 20.0f, m_camera->GetMatrix());
 		aux->SetOrthographicProjection(false);
 	}
-
-	for (size_t i = 0; i < m_consumers.size(); ++i)
-		m_consumers[i]->OnViewportRender(rc);
 
 	aux->Submit();
 	aux->SetRenderFlags(oldFlags);

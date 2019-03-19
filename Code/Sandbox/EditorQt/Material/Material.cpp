@@ -1340,8 +1340,6 @@ bool CMaterial::IsBreakable2D() const
 	if ((GetFlags() & MTL_FLAG_NODRAW) != 0)
 		return false;
 
-	int result = 0;
-
 	const string& surfaceTypeName = GetSurfaceTypeName();
 	if (ISurfaceTypeManager* pSurfaceManager = GetIEditorImpl()->Get3DEngine()->GetMaterialManager()->GetSurfaceTypeManager())
 	{
@@ -1935,10 +1933,10 @@ protected:
 		}
 
 		CBaseLibraryItem::SerializeContext ctx(m_undo, true);
-		ctx.bUndo = bUndo;
+		ctx.bUndo = true;
 		pMaterial->Serialize(ctx);
 
-		if (m_bForceUpdate && bUndo)
+		if (m_bForceUpdate)
 		{
 			GetIEditorImpl()->GetMaterialManager()->OnUpdateProperties(pMaterial);
 		}

@@ -2,7 +2,7 @@
 
 #pragma once
 
-#include "Common/SharedData.h"
+#include "Common.h"
 #include <QWidget>
 
 class QPropertyTree;
@@ -30,7 +30,10 @@ public:
 	void Reset();
 	void OnBeforeReload();
 	void OnAfterReload();
+	void OnFileImporterOpened();
+	void OnFileImporterClosed();
 	void OnSetSelectedAssets(Assets const& selectedAssets, bool const restoreSelection);
+	void OnConnectionAdded(ControlId const id);
 
 private:
 

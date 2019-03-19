@@ -33,7 +33,7 @@
 #include <AssetSystem/EditableAsset.h>
 #include <Controls/DockableDialog.h>
 #include <Controls/QuestionDialog.h>
-#include <EditorFramework/Inspector.h>
+#include <EditorFramework/InspectorLegacy.h>
 #include <EditorFramework/Events.h>
 #include <EditorFramework/PreferencesDialog.h>
 #include <EditorStyleHelper.h>
@@ -66,11 +66,11 @@
 // Register viewpanes defined in EditorCommon
 REGISTER_VIEWPANE_FACTORY_AND_MENU(CNotificationCenterDockable, "Notification Center", "Advanced", true, "Advanced")
 
-class CLevelEditorInspector : public CInspector
+class CLevelEditorInspector : public CInspectorLegacy
 {
 public:
 	CLevelEditorInspector()
-		: CInspector(CEditorMainFrame::GetInstance()->GetLevelEditor())
+		: CInspectorLegacy(CEditorMainFrame::GetInstance()->GetLevelEditor())
 	{
 		GetIEditorImpl()->GetObjectManager()->EmitPopulateInspectorEvent();
 	}
@@ -638,7 +638,6 @@ bool CLevelEditor::OnNew()
 
 	// levelSaveDialog has got the confirmation to overwrite the level.
 	CAsset* pAsset = CAssetManager::GetInstance()->FindAssetForMetadata(cryassetPath);
-	size_t filesDeleted = 0;
 
 	// If new level path does not point to a level
 	if (!pAsset)
@@ -752,7 +751,7 @@ bool CLevelEditor::OnSaveAs()
 	if (dialog.Execute())
 	{
 		auto filename = CLevelType::MakeLevelFilename(dialog.GetSelectedAssetPath());
-		GetIEditorImpl()->GetDocument()->DoSave(PathUtil::GamePathToCryPakPath(filename,  true), true);
+		GetIEditorImpl()->GetDocument()->DoSave(PathUtil::GamePathToCryPakPath(filename, true), true);
 		SaveCryassetFile(GetIEditorImpl()->GetDocument()->GetPathName());
 	}
 	return true;
@@ -915,29 +914,14 @@ bool CLevelEditor::OnPaste()
 		return false;
 	}
 
-	IObjectManager* objManager = GetIEditorImpl()->GetObjectManager();
+	IObjectManager* pObjectManager = GetIEditorImpl()->GetObjectManager();
 
-	CObjectArchive archive(objManager, copyNode, true);
+	CObjectArchive archive(pObjectManager, copyNode, true);
 
 	CRandomUniqueGuidProvider guidProvider;
 	archive.SetGuidProvider(&guidProvider);
 	archive.LoadInCurrentLayer(true);
-	{
-		CUndo undo("Paste Objects");
-
-		objManager->ClearSelection();
-		// instantiate the new objects
-		objManager->LoadObjects(archive, true);
-
-		//Make sure the new objects have unique names
-		const CSelectionGroup* selGroup = objManager->GetSelection();
-
-		for (int i = 0, nObj = selGroup->GetCount(); i < nObj; ++i)
-		{
-			CBaseObject* pObj = selGroup->GetObject(i);
-			pObj->SetName(objManager->GenUniqObjectName(pObj->GetName()));
-		}
-	}
+	pObjectManager->CreateAndSelectObjects(archive);
 
 	return true;
 }

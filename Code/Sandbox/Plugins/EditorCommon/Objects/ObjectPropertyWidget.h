@@ -8,6 +8,7 @@
 #include <memory>
 #include <vector>
 
+
 class CBaseObject;
 class QPropertyTree;
 
@@ -25,8 +26,9 @@ public:
 	void OnObjectEvent(const CBaseObject* pObject, const CObjectEvent& event);
 	void OnEditorNotifyEvent(EEditorNotifyEvent event);
 
-public slots:
-	void UndoPush();
+public:
+	void OnBeginUndo();
+	void OnUndoEnd(bool undoAccepted);
 
 	void CreatePropertyTrees();
 

@@ -17,15 +17,15 @@ public:
 	CUnmuteAllTrigger& operator=(CUnmuteAllTrigger const&) = delete;
 	CUnmuteAllTrigger& operator=(CUnmuteAllTrigger&&) = delete;
 
-#if defined(INCLUDE_AUDIO_PRODUCTION_CODE)
+#if defined(CRY_AUDIO_USE_DEBUG_CODE)
 	CUnmuteAllTrigger()
-		: Control(UnmuteAllTriggerId, EDataScope::Global, s_szUnmuteAllTriggerName)
+		: Control(g_unmuteAllTriggerId, GlobalContextId, g_szUnmuteAllTriggerName)
 	{}
 #else
 	CUnmuteAllTrigger()
-		: Control(UnmuteAllTriggerId, EDataScope::Global)
+		: Control(g_unmuteAllTriggerId, GlobalContextId)
 	{}
-#endif // INCLUDE_AUDIO_PRODUCTION_CODE
+#endif // CRY_AUDIO_USE_DEBUG_CODE
 
 	~CUnmuteAllTrigger();
 

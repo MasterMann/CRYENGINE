@@ -43,6 +43,9 @@ public:
 		return clampedHeight; // If multiple of 8: std::min(Align(clampedHeight, 8), customHeight);
 	}
 
+	static bool IsRainEnabled() { return CV_r_rain > 0; }
+	static bool IsSnowEnabled() { return CV_r_snow > 0; }
+
 protected:
 
 	// Helper methods.
@@ -161,6 +164,7 @@ public:
 	static int CV_r_shadersCacheClearOnVersionChange;
 	static int CV_r_meshpoolsize;
 	static int CV_r_meshinstancepoolsize;
+	static int CV_r_MeshPoolForceFreeAfterUpdate;
 	static int CV_r_multigpu;
 
 	static int CV_r_nodrawnear;
@@ -408,6 +412,7 @@ public:
 	DeclareStaticConstIntCVar(CV_e_DebugTexelDensity, 0);
 	DeclareStaticConstIntCVar(CV_e_DebugDraw, 0);
 	DeclareStaticConstIntCVar(CV_e_TerrainBlendingDebug, 0);
+	DeclareStaticConstIntCVar(CV_e_Clouds, 0);
 	static int CV_r_RainDropsEffect;
 	DeclareStaticConstIntCVar(CV_r_RefractionPartialResolveMode, 2);
 	DeclareStaticConstIntCVar(CV_r_RefractionPartialResolveMinimalResolveArea, 0);
@@ -675,6 +680,7 @@ public:
 		union
 		{
 			int   intValue;
+			int64 int64Value;
 			float floatValue;
 			char  stringValue[64];
 		};

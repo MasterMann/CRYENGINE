@@ -3,13 +3,14 @@
 #include "StdAfx.h"
 #include "MainWindow.h"
 
-#include "Common.h"
 #include "AudioControlsEditorPlugin.h"
-#include "ImplementationManager.h"
+#include "AssetsManager.h"
+#include "ImplManager.h"
 #include "PreferencesDialog.h"
 #include "SystemControlsWidget.h"
 #include "PropertiesWidget.h"
 #include "MiddlewareDataWidget.h"
+#include "ContextWidget.h"
 #include "FileMonitorMiddleware.h"
 #include "FileMonitorSystem.h"
 #include "Common/IImpl.h"
@@ -31,14 +32,64 @@
 namespace ACE
 {
 //////////////////////////////////////////////////////////////////////////
+void OnBeforeReload()
+{
+	if (g_pSystemControlsWidget != nullptr)
+	{
+		g_pSystemControlsWidget->OnBeforeReload();
+	}
+
+	if (g_pIImpl != nullptr)
+	{
+		g_pIImpl->OnBeforeReload();
+	}
+
+	if (g_pPropertiesWidget != nullptr)
+	{
+		g_pPropertiesWidget->OnBeforeReload();
+	}
+
+	if (g_pContextWidget != nullptr)
+	{
+		g_pContextWidget->OnBeforeReload();
+	}
+}
+
+//////////////////////////////////////////////////////////////////////////
+void OnAfterReload()
+{
+	if (g_pSystemControlsWidget != nullptr)
+	{
+		g_pSystemControlsWidget->OnAfterReload();
+	}
+
+	if (g_pIImpl != nullptr)
+	{
+		g_pIImpl->OnAfterReload();
+	}
+
+	if (g_pPropertiesWidget != nullptr)
+	{
+		g_pPropertiesWidget->OnAfterReload();
+	}
+
+	if (g_pContextWidget != nullptr)
+	{
+		g_pContextWidget->OnAfterReload();
+	}
+}
+
+//////////////////////////////////////////////////////////////////////////
 CMainWindow::CMainWindow()
 	: m_pImplNameLabel(new QLabel(this))
 	, m_pToolBar(new QToolBar("ACE Tools", this))
 	, m_pMonitorSystem(new CFileMonitorSystem(1000, this))
-	, m_pMonitorMiddleware(new CFileMonitorMiddleware(500, this))
 	, m_isModified(false)
 	, m_isReloading(false)
 {
+	g_pMainWindow = this;
+	g_pFileMonitorMiddleware = new CFileMonitorMiddleware(500, this);
+
 	setAttribute(Qt::WA_DeleteOnClose);
 	setObjectName(GetEditorName());
 
@@ -69,14 +120,13 @@ CMainWindow::CMainWindow()
 	if (g_pIImpl != nullptr)
 	{
 		g_assetsManager.UpdateAllConnectionStates();
-		CheckErrorMask();
 	}
 
 	UpdateImplLabel();
 	m_pToolBar->setEnabled(g_pIImpl != nullptr);
 
 	QObject::connect(m_pMonitorSystem, &CFileMonitorSystem::SignalReloadData, this, &CMainWindow::ReloadSystemData);
-	QObject::connect(m_pMonitorMiddleware, &CFileMonitorMiddleware::SignalReloadData, this, &CMainWindow::ReloadMiddlewareData);
+	QObject::connect(g_pFileMonitorMiddleware, &CFileMonitorMiddleware::SignalReloadData, this, &CMainWindow::ReloadMiddlewareData);
 
 	g_assetsManager.SignalIsDirty.Connect([this](bool const isDirty)
 		{
@@ -84,8 +134,8 @@ CMainWindow::CMainWindow()
 			m_pSaveAction->setEnabled(isDirty);
 		}, reinterpret_cast<uintptr_t>(this));
 
-	g_implementationManager.SignalOnBeforeImplementationChange.Connect(this, &CMainWindow::SaveBeforeImplementationChange);
-	g_implementationManager.SignalOnAfterImplementationChange.Connect([this]()
+	g_implManager.SignalOnBeforeImplChange.Connect(this, &CMainWindow::SaveBeforeImplChange);
+	g_implManager.SignalOnAfterImplChange.Connect([this]()
 		{
 			UpdateImplLabel();
 			Reload(true);
@@ -93,18 +143,17 @@ CMainWindow::CMainWindow()
 			m_pToolBar->setEnabled(g_pIImpl != nullptr);
 		}, reinterpret_cast<uintptr_t>(this));
 
-	GetIEditor()->RegisterNotifyListener(this);
 	GetISystem()->GetISystemEventDispatcher()->RegisterListener(this, "CAudioControlsEditorMainWindow");
 }
 
 //////////////////////////////////////////////////////////////////////////
 CMainWindow::~CMainWindow()
 {
-	g_implementationManager.SignalOnBeforeImplementationChange.DisconnectById(reinterpret_cast<uintptr_t>(this));
-	g_implementationManager.SignalOnAfterImplementationChange.DisconnectById(reinterpret_cast<uintptr_t>(this));
+	g_implManager.SignalOnBeforeImplChange.DisconnectById(reinterpret_cast<uintptr_t>(this));
+	g_implManager.SignalOnAfterImplChange.DisconnectById(reinterpret_cast<uintptr_t>(this));
 	g_assetsManager.SignalIsDirty.DisconnectById(reinterpret_cast<uintptr_t>(this));
-	GetIEditor()->UnregisterNotifyListener(this);
 	GetISystem()->GetISystemEventDispatcher()->RemoveListener(this);
+	g_pMainWindow = nullptr;
 }
 
 //////////////////////////////////////////////////////////////////////////
@@ -151,6 +200,7 @@ void CMainWindow::RegisterWidgets()
 
 	RegisterDockableWidget("Audio System Controls", [&]() { return CreateSystemControlsWidget(); }, true, false);
 	RegisterDockableWidget("Properties", [&]() { return CreatePropertiesWidget(); }, true, false);
+	RegisterDockableWidget("Contexts", [&]() { return CreateContextWidget(); }, true, false);
 	RegisterDockableWidget("Middleware Data", [&]() { return CreateMiddlewareDataWidget(); }, true, false);
 }
 
@@ -201,6 +251,21 @@ CMiddlewareDataWidget* CMainWindow::CreateMiddlewareDataWidget()
 }
 
 //////////////////////////////////////////////////////////////////////////
+CContextWidget* CMainWindow::CreateContextWidget()
+{
+	auto pContextWidget = new CContextWidget(this);
+
+	if (g_pContextWidget == nullptr)
+	{
+		g_pContextWidget = pContextWidget;
+	}
+
+	QObject::connect(pContextWidget, &QObject::destroyed, this, &CMainWindow::OnContextWidgetDestruction);
+
+	return pContextWidget;
+}
+
+//////////////////////////////////////////////////////////////////////////
 void CMainWindow::OnSystemControlsWidgetDestruction(QObject* const pObject)
 {
 	auto pWidget = static_cast<CSystemControlsWidget*>(pObject);
@@ -234,14 +299,27 @@ void CMainWindow::OnMiddlewareDataWidgetDestruction(QObject* const pObject)
 }
 
 //////////////////////////////////////////////////////////////////////////
+void CMainWindow::OnContextWidgetDestruction(QObject* const pObject)
+{
+	auto pWidget = static_cast<CContextWidget*>(pObject);
+
+	if (g_pContextWidget == pWidget)
+	{
+		g_pContextWidget = nullptr;
+	}
+}
+
+//////////////////////////////////////////////////////////////////////////
 void CMainWindow::CreateDefaultLayout(CDockableContainer* pSender)
 {
 	CRY_ASSERT_MESSAGE(pSender != nullptr, "Dockable container is null pointer during %s", __FUNCTION__);
 
 	pSender->SpawnWidget("Audio System Controls");
-	pSender->SpawnWidget("Properties", QToolWindowAreaReference::VSplitRight);
-	QWidget* pWidget = pSender->SpawnWidget("Middleware Data", QToolWindowAreaReference::VSplitRight);
-	pSender->SetSplitterSizes(pWidget, { 1, 1, 1 });
+	QWidget* pPropertiesWidget = pSender->SpawnWidget("Properties", QToolWindowAreaReference::VSplitRight);
+	QWidget* pMiddlewareWidget = pSender->SpawnWidget("Middleware Data", QToolWindowAreaReference::VSplitRight);
+	pSender->SetSplitterSizes(pMiddlewareWidget, { 1, 1, 1 });
+	QWidget* pContextWidget = pSender->SpawnWidget("Contexts", pPropertiesWidget, QToolWindowAreaReference::HSplitBottom);
+	pSender->SetSplitterSizes(pContextWidget, { 2, 1 });
 }
 
 //////////////////////////////////////////////////////////////////////////
@@ -299,7 +377,7 @@ void CMainWindow::UpdateImplLabel()
 void CMainWindow::Reload(bool const hasImplChanged /*= false*/)
 {
 	m_pMonitorSystem->Disable();
-	m_pMonitorMiddleware->Disable();
+	g_pFileMonitorMiddleware->Disable();
 
 	bool shouldReload = true;
 
@@ -348,7 +426,6 @@ void CMainWindow::Reload(bool const hasImplChanged /*= false*/)
 		if (g_pIImpl != nullptr)
 		{
 			g_assetsManager.UpdateAllConnectionStates();
-			CheckErrorMask();
 		}
 
 		if (!hasImplChanged)
@@ -361,11 +438,11 @@ void CMainWindow::Reload(bool const hasImplChanged /*= false*/)
 	}
 
 	m_pMonitorSystem->Enable();
-	m_pMonitorMiddleware->Enable();
+	g_pFileMonitorMiddleware->Enable();
 }
 
 //////////////////////////////////////////////////////////////////////////
-void CMainWindow::SaveBeforeImplementationChange()
+void CMainWindow::SaveBeforeImplChange()
 {
 	if (m_isModified)
 	{
@@ -383,23 +460,12 @@ void CMainWindow::SaveBeforeImplementationChange()
 }
 
 //////////////////////////////////////////////////////////////////////////
-void CMainWindow::CheckErrorMask()
-{
-	EErrorCode const errorCodeMask = CAudioControlsEditorPlugin::GetLoadingErrorMask();
-
-	if ((errorCodeMask& EErrorCode::UnkownPlatform) != 0)
-	{
-		CQuestionDialog::SWarning(tr(GetEditorName()), tr("Audio Preloads reference an unknown platform.\nSaving will permanently erase this data."));
-	}
-}
-
-//////////////////////////////////////////////////////////////////////////
 void CMainWindow::Save()
 {
 	QGuiApplication::setOverrideCursor(Qt::WaitCursor);
 	m_pMonitorSystem->Disable();
 	CAudioControlsEditorPlugin::SaveData();
-	UpdateAudioSystemData();
+	gEnv->pAudioSystem->ReloadControlsData();
 	m_pMonitorSystem->EnableDelayed();
 	QGuiApplication::restoreOverrideCursor();
 
@@ -419,43 +485,9 @@ void CMainWindow::Save()
 }
 
 //////////////////////////////////////////////////////////////////////////
-void CMainWindow::UpdateAudioSystemData()
-{
-	string levelPath = CryAudio::s_szLevelsFolderName;
-	levelPath += "/";
-	levelPath += GetIEditor()->GetLevelName();
-	gEnv->pAudioSystem->ReloadControlsData(gEnv->pAudioSystem->GetConfigPath(), levelPath.c_str());
-}
-
-//////////////////////////////////////////////////////////////////////////
 void CMainWindow::RefreshAudioSystem()
 {
-	QGuiApplication::setOverrideCursor(Qt::WaitCursor);
-	char const* szLevelName = GetIEditor()->GetLevelName();
-
-	if (_stricmp(szLevelName, "Untitled") == 0)
-	{
-		// Rather pass nullptr to indicate that no level is loaded!
-		szLevelName = nullptr;
-	}
-
-	CryAudio::SRequestUserData const data(CryAudio::ERequestFlags::ExecuteBlocking);
-	gEnv->pAudioSystem->Refresh(szLevelName, data);
-	QGuiApplication::restoreOverrideCursor();
-}
-
-//////////////////////////////////////////////////////////////////////////
-void CMainWindow::OnEditorNotifyEvent(EEditorNotifyEvent event)
-{
-	if (event == eNotify_OnEndSceneSave)
-	{
-		CAudioControlsEditorPlugin::ReloadData(EReloadFlags::ReloadScopes);
-
-		if (g_pPropertiesWidget != nullptr)
-		{
-			g_pPropertiesWidget->Reset();
-		}
-	}
+	GetISystem()->GetISystemEventDispatcher()->OnSystemEvent(ESYSTEM_EVENT_AUDIO_REFRESH, 0, 0);
 }
 
 //////////////////////////////////////////////////////////////////////////
@@ -497,7 +529,7 @@ void CMainWindow::ReloadSystemData()
 //////////////////////////////////////////////////////////////////////////
 void CMainWindow::ReloadMiddlewareData()
 {
-	m_pMonitorMiddleware->Disable();
+	g_pFileMonitorMiddleware->Disable();
 	QGuiApplication::setOverrideCursor(Qt::WaitCursor);
 	OnBeforeReload();
 
@@ -510,45 +542,7 @@ void CMainWindow::ReloadMiddlewareData()
 
 	OnAfterReload();
 	QGuiApplication::restoreOverrideCursor();
-	m_pMonitorMiddleware->Enable();
-}
-
-//////////////////////////////////////////////////////////////////////////
-void CMainWindow::OnBeforeReload()
-{
-	if (g_pSystemControlsWidget != nullptr)
-	{
-		g_pSystemControlsWidget->OnBeforeReload();
-	}
-
-	if (g_pIImpl != nullptr)
-	{
-		g_pIImpl->OnBeforeReload();
-	}
-
-	if (g_pPropertiesWidget != nullptr)
-	{
-		g_pPropertiesWidget->OnBeforeReload();
-	}
-}
-
-//////////////////////////////////////////////////////////////////////////
-void CMainWindow::OnAfterReload()
-{
-	if (g_pSystemControlsWidget != nullptr)
-	{
-		g_pSystemControlsWidget->OnAfterReload();
-	}
-
-	if (g_pIImpl != nullptr)
-	{
-		g_pIImpl->OnAfterReload();
-	}
-
-	if (g_pPropertiesWidget != nullptr)
-	{
-		g_pPropertiesWidget->OnAfterReload();
-	}
+	g_pFileMonitorMiddleware->Enable();
 }
 
 //////////////////////////////////////////////////////////////////////////
@@ -556,12 +550,12 @@ void CMainWindow::OnPreferencesDialog()
 {
 	auto const pPreferencesDialog = new CPreferencesDialog(this);
 
-	QObject::connect(pPreferencesDialog, &CPreferencesDialog::SignalOnBeforeImplementationSettingsChange, [&]()
+	QObject::connect(pPreferencesDialog, &CPreferencesDialog::SignalOnBeforeImplSettingsChange, [&]()
 		{
 			OnBeforeReload();
 		});
 
-	QObject::connect(pPreferencesDialog, &CPreferencesDialog::SignalOnAfterImplementationSettingsChanged, [&]()
+	QObject::connect(pPreferencesDialog, &CPreferencesDialog::SignalOnAfterImplSettingsChanged, [&]()
 		{
 			if (g_pPropertiesWidget != nullptr)
 			{
@@ -569,7 +563,7 @@ void CMainWindow::OnPreferencesDialog()
 			}
 
 			OnAfterReload();
-			m_pMonitorMiddleware->Enable();
+			g_pFileMonitorMiddleware->Enable();
 		});
 
 	pPreferencesDialog->exec();
@@ -637,5 +631,4 @@ bool CMainWindow::CanQuit(std::vector<string>& unsavedChanges)
 
 	return canQuit;
 }
-
 } // namespace ACE

@@ -7,6 +7,7 @@
 #include "SceneGBuffer.h"
 #include "SceneDepth.h"
 #include "SceneForward.h"
+#include "Sky.h"
 #include "SceneCustom.h"
 #include "AutoExposure.h"
 #include "Bloom.h"
@@ -59,6 +60,8 @@ CStandardGraphicsPipeline::CStandardGraphicsPipeline()
 
 void CStandardGraphicsPipeline::Init()
 {
+	MEMSTAT_CONTEXT(EMemStatContextTypes::MSC_Other, 0, "CStandardGraphicsPipeline::Init");
+
 	// default material bind points
 	{
 		m_defaultMaterialBindPoints.SetConstantBuffer(eConstantBufferShaderSlot_PerMaterial, CDeviceBufferManager::GetNullConstantBuffer(), EShaderStage_AllWithoutCompute);
@@ -109,6 +112,7 @@ void CStandardGraphicsPipeline::Init()
 	RegisterStage<CScreenSpaceReflectionsStage>(m_pScreenSpaceReflectionsStage, eStage_ScreenSpaceReflections);
 	RegisterStage<CScreenSpaceSSSStage        >(m_pScreenSpaceSSSStage        , eStage_ScreenSpaceSSS);
 	RegisterStage<CVolumetricFogStage         >(m_pVolumetricFogStage         , eStage_VolumetricFog);
+	RegisterStage<CSkyStage                   >(m_pSkyStage                   , eStage_Sky);
 	RegisterStage<CFogStage                   >(m_pFogStage                   , eStage_Fog);
 	RegisterStage<CVolumetricCloudsStage      >(m_pVolumetricCloudsStage      , eStage_VolumetricClouds);
 	RegisterStage<CWaterRipplesStage          >(m_pWaterRipplesStage          , eStage_WaterRipples);
@@ -208,11 +212,9 @@ void CStandardGraphicsPipeline::ShutDown()
 }
 
 //////////////////////////////////////////////////////////////////////////
-void CStandardGraphicsPipeline::Update(CRenderView* pRenderView, EShaderRenderingFlags renderingFlags)
+void CStandardGraphicsPipeline::Update(EShaderRenderingFlags renderingFlags)
 {
 	FUNCTION_PROFILER_RENDERER();
-
-	CGraphicsPipeline::SetCurrentRenderView(pRenderView);
 
 	m_numInvalidDrawcalls = 0;
 	GenerateMainViewConstantBuffer();
@@ -223,12 +225,8 @@ void CStandardGraphicsPipeline::Update(CRenderView* pRenderView, EShaderRenderin
 		m_changedCVars.Reset();
 	}
 
-	// Compile shadow renderitems (TODO: move into ShadowMap's Update())
-	if (m_pShadowMapStage->IsStageActive(renderingFlags))
-		pRenderView->PrepareShadowViews();
-
 	m_renderingFlags = renderingFlags;
-	CGraphicsPipeline::Update(pRenderView, renderingFlags);
+	CGraphicsPipeline::Update(renderingFlags);
 }
 
 //////////////////////////////////////////////////////////////////////////
@@ -428,7 +426,6 @@ void CStandardGraphicsPipeline::GeneratePerViewConstantBuffer(const SRenderViewI
 			float zn = viewInfo.nearClipPlane;
 			float zf = viewInfo.farClipPlane;
 			float nearZRange = CRendererCVars::CV_r_DrawNearZRange;
-			float camScale = CRendererCVars::CV_r_DrawNearFarPlane / gEnv->p3DEngine->GetMaxViewDistance();
 			cb.CV_NearestScaled.x = bReverseDepth ? 1.0f - zf / (zf - zn) * nearZRange : zf / (zf - zn) * nearZRange;
 			cb.CV_NearestScaled.y = bReverseDepth ? zn / (zf - zn) * nearZRange * nearZRange : zn / (zn - zf) * nearZRange * nearZRange;
 			cb.CV_NearestScaled.z = bReverseDepth ? 1.0f - (nearZRange - 0.001f) : nearZRange - 0.001f;
@@ -474,7 +471,6 @@ bool CStandardGraphicsPipeline::FillCommonScenePassStates(const SGraphicsPipelin
 
 	CShaderResources* pRes = static_cast<CShaderResources*>(inputDesc.shaderItem.m_pShaderResources);
 	const uint64 objectFlags = inputDesc.objectFlags;
-	const uint8 renderState = inputDesc.renderState;
 	SShaderPass* pShaderPass = &pTechnique->m_Passes[0];
 
 	// Handle quality flags
@@ -666,7 +662,7 @@ void CStandardGraphicsPipeline::ExecuteHDRPostProcessing()
 		m_pColorGradingStage->Execute();
 
 	// 0 is used for disable debugging and 1 is used to just show the average and estimated luminance, and exposure values.
-	if (m_pToneMappingStage->IsDebugInfoEnabled())
+	if (m_pToneMappingStage->IsDebugDrawEnabled())
 		m_pToneMappingStage->ExecuteDebug();
 	else
 		m_pToneMappingStage->Execute();
@@ -686,7 +682,6 @@ void CStandardGraphicsPipeline::ExecuteBillboards()
 {
 	FUNCTION_PROFILER_RENDERER();
 
-	CD3D9Renderer* pRenderer = gcpRendD3D;
 	CRenderView* pRenderView = GetCurrentRenderView();
 
 	CClearSurfacePass::Execute(CRendererResources::s_ptexSceneNormalsMap, Clr_Transparent);
@@ -738,7 +733,10 @@ void CStandardGraphicsPipeline::ExecuteMinimumForwardShading()
 	m_pSceneGBufferStage->ExecuteMinimumZpass();
 
 	// forward opaque and transparent passes for recursive rendering
-	m_pSceneForwardStage->ExecuteSky(pColorTex, pDepthTex);
+	if (!bSecondaryViewport)
+	{
+		m_pSkyStage->Execute(pColorTex, pDepthTex);
+	}	
 	m_pSceneForwardStage->ExecuteMinimum(pColorTex, pDepthTex);
 
 	// Insert fence which is used on consoles to prevent overwriting video memory
@@ -801,7 +799,7 @@ void CStandardGraphicsPipeline::ExecuteMobilePipeline()
 	}
 
 	// Opaque and transparent forward passes
-	m_pSceneForwardStage->ExecuteSky(CRendererResources::s_ptexHDRTarget, pZTexture);
+	m_pSkyStage->Execute(CRendererResources::s_ptexHDRTarget, pZTexture);
 	m_pSceneForwardStage->ExecuteMobile();
 
 	// Insert fence which is used on consoles to prevent overwriting video memory
@@ -936,10 +934,10 @@ void CStandardGraphicsPipeline::Execute()
 	}
 
 	{
-		PROFILE_LABEL_SCOPE("FORWARD");
+		PROFILE_LABEL_SCOPE("FORWARD Z");
 
 		// Opaque forward passes
-		m_pSceneForwardStage->ExecuteSky(CRendererResources::s_ptexHDRTarget, pZTexture);
+		m_pSkyStage->Execute(CRendererResources::s_ptexHDRTarget, pZTexture);
 		m_pSceneForwardStage->ExecuteOpaque();
 	}
 
@@ -947,24 +945,26 @@ void CStandardGraphicsPipeline::Execute()
 	if (m_pWaterStage->IsDeferredOceanCausticsEnabled())
 		m_pWaterStage->ExecuteDeferredOceanCaustics();
 
-	// Fog
-	if (m_pVolumetricFogStage->IsStageActive(m_renderingFlags))
-		m_pVolumetricFogStage->Execute();
+	{
+		// Fog
+		if (m_pVolumetricFogStage->IsStageActive(m_renderingFlags))
+			m_pVolumetricFogStage->Execute();
 
-	if (m_pFogStage->IsStageActive(m_renderingFlags))
-		m_pFogStage->Execute();
+		if (m_pFogStage->IsStageActive(m_renderingFlags))
+			m_pFogStage->Execute();
 
-	SetPipelineFlags(GetPipelineFlags() & ~EPipelineFlags::NO_SHADER_FOG);
+		SetPipelineFlags(GetPipelineFlags() & ~EPipelineFlags::NO_SHADER_FOG);
 
-	// Clouds
-	if (m_pVolumetricCloudsStage->IsStageActive(m_renderingFlags))
-		m_pVolumetricCloudsStage->Execute();
+		// Clouds
+		if (m_pVolumetricCloudsStage->IsStageActive(m_renderingFlags))
+			m_pVolumetricCloudsStage->Execute();
 
-	// Water fog volumes
-	m_pWaterStage->ExecuteWaterFogVolumeBeforeTransparent();
+		// Water fog volumes
+		m_pWaterStage->ExecuteWaterFogVolumeBeforeTransparent();
+	}
 
 	{
-		PROFILE_LABEL_SCOPE("FORWARD");
+		PROFILE_LABEL_SCOPE("FORWARD T");
 
 		// Transparent (below water)
 		m_pSceneForwardStage->ExecuteTransparentBelowWater();

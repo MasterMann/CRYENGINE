@@ -45,7 +45,6 @@
 void CD3D9Renderer::EF_Init()
 {
 	m_bInitialized = true;
-	bool nv = 0;
 
 	if (CV_r_logTexStreaming && !m_LogFileStr)
 	{
@@ -252,7 +251,6 @@ int CD3D9Renderer::EF_Preprocess(SRendItem* ri, uint32 nums, uint32 nume, const 
 	if (m_LogFile)
 		gRenDev->Logv("*** Start preprocess frame ***\n");
 
-	int DLDFlags = 0;
 	int nReturn  = 0;
 
 	for (i = nums; i < nume; i++)
@@ -274,7 +272,6 @@ int CD3D9Renderer::EF_Preprocess(SRendItem* ri, uint32 nums, uint32 nume, const 
 			nTech = 0;
 		if (nTech < (int)Shader->m_HWTechniques.Num())
 		{
-			SShaderTechnique* pTech = Shader->m_HWTechniques[nTech];
 			for (j = SPRID_FIRST; j < 32; j++)
 			{
 				uint32 nMask = 1 << j;
@@ -518,6 +515,8 @@ void CD3D9Renderer::FX_ClearCharInstCB(uint32 frameId)
 
 void CD3D9Renderer::RT_PreRenderScene(CRenderView* pRenderView)
 {
+	GetGraphicsPipeline().SetCurrentRenderView(pRenderView);
+
 	const uint32 shaderRenderingFlags = pRenderView->GetShaderRenderingFlags();
 	const bool bRecurse = pRenderView->IsRecursive();
 	const bool bAllowPostProcess = pRenderView->IsPostProcessingEnabled();
@@ -595,6 +594,8 @@ void CD3D9Renderer::RT_PostRenderScene(CRenderView* pRenderView)
 	{
 		gRenDev->GetIRenderAuxGeom()->Submit();
 	}
+
+	GetGraphicsPipeline().SetCurrentRenderView(nullptr);
 }
 
 // Render thread only scene rendering
@@ -615,7 +616,6 @@ void CD3D9Renderer::RT_RenderScene(CRenderView* pRenderView)
 	const bool bRecurse = pRenderView->IsRecursive();
 	const bool bSecondaryViewport = (shaderRenderingFlags & SHDF_SECONDARY_VIEWPORT) != 0;
 	const bool bFullRendering = (shaderRenderingFlags & SHDF_ZPASS) && (shaderRenderingFlags & SHDF_ALLOWPOSTPROCESS);
-	const bool bAllowPostProcess = pRenderView->IsPostProcessingEnabled();
 	const CTimeValue Time = iTimer->GetAsyncTime();
 
 	shaderRenderingFlags |= (!bFullRendering || bRecurse || bSecondaryViewport) * SHDF_FORWARD_MINIMAL;
@@ -655,7 +655,7 @@ void CD3D9Renderer::RT_RenderScene(CRenderView* pRenderView)
 	{
 		CRY_ASSERT(shaderRenderingFlags & SHDF_ALLOWHDR);
 
-		GetGraphicsPipeline().Update(pRenderView, EShaderRenderingFlags(shaderRenderingFlags));
+		GetGraphicsPipeline().Update(EShaderRenderingFlags(shaderRenderingFlags));
 
 		{
 			PROFILE_FRAME(WaitForParticleRendItems);
@@ -803,7 +803,6 @@ void CD3D9Renderer::SubmitRenderViewForRendering(int nFlags, const SRenderingPas
 void CD3D9Renderer::EF_EndEf3D(const int nPrecacheUpdateIdSlow, const int nPrecacheUpdateIdFast, const SRenderingPassInfo& passInfo)
 {
 	ASSERT_IS_MAIN_THREAD(m_pRT)
-	auto nThreadID = gRenDev->GetMainThreadID();
 
 	const int nFlags = passInfo.GetIRenderView()->GetShaderRenderingFlags();
 
@@ -881,8 +880,6 @@ void CD3D9Renderer::RenderFrame(int nSceneRenderingFlags, const SRenderingPassIn
 	ReadPerFrameShaderConstants(passInfo, bSecondaryViewport);
 
 	{
-		int nThreadID = passInfo.ThreadID();
-
 		CTimeValue time0 = iTimer->GetAsyncTime();
 #ifndef _RELEASE
 		if (CV_r_excludeshader->GetString()[0] != '0')

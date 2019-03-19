@@ -174,9 +174,8 @@ private:
 	IJoystickSet*         m_pJoystickSet;
 };
 
-class IJoystickActionMode : public _reference_target_t
+struct IJoystickActionMode : public _reference_target_t
 {
-public:
 	virtual void OnClick(const Vec2& vPosition, bool controlHeld, IJoystickActionContext* pContext) {}
 	virtual void OnStartDragging(const Vec2& vPosition, IJoystickActionContext* pContext)           {}
 	virtual void OnDragging(const Vec2& vPosition, IJoystickActionContext* pContext)                {}
@@ -1519,7 +1518,6 @@ void CJoystickCtrl::RenderString(CDC& dc, const char* szString, const Vec2& posi
 	enum {MAX_STRING = 256};
 	WCHAR wszString[MAX_STRING];
 
-	int length = min((szString ? int(strlen(szString)) : 0), MAX_STRING - 1);
 	Unicode::Convert(wszString, szString ? szString : "");
 
 	if (wcslen(wszString) == 0)

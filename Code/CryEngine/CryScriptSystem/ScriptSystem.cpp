@@ -1326,7 +1326,7 @@ int CScriptSystem::BeginCall(HSCRIPTFUNCTION hFunc)
 	lua_getref(L, (int)(INT_PTR)hFunc);
 	if (!lua_isfunction(L, -1))
 	{
-#if defined(CRY_COMPILER_GCC)
+#if defined(CRY_COMPILER_GCC) || defined(CRY_COMPILER_CLANG)
 		ScriptWarning("[CScriptSystem::BeginCall] Function Ptr:%d not found", (int)(INT_PTR)hFunc);
 #else
 		ScriptWarning("[CScriptSystem::BeginCall] Function Ptr:%d not found", hFunc);
@@ -2138,7 +2138,6 @@ void CScriptSystem::ShowDebugger(const char* pszSourceFile, int iLine, const cha
 void CScriptSystem::Update()
 {
 	CRY_PROFILE_REGION(PROFILE_SCRIPT, "ScriptSystem: Update");
-	CRYPROFILE_SCOPE_PROFILE_MARKER("ScriptSystem: Update");
 	MEMSTAT_FUNCTION_CONTEXT(EMemStatContextTypes::MSC_Other);
 	
 	ITimer* pTimer = gEnv->pTimer;
@@ -2227,7 +2226,7 @@ void CScriptSystem::SetEnvironment(HSCRIPTFUNCTION scriptFunction, IScriptTable*
 	lua_getref(L, (int)(INT_PTR)scriptFunction);
 	if (!lua_isfunction(L, -1))
 	{
-#if defined(CRY_COMPILER_GCC)
+#if defined(CRY_COMPILER_GCC) || defined(CRY_COMPILER_CLANG)
 		ScriptWarning("[CScriptSystem::SetEnvironment] Function %d not found", (int)(INT_PTR)scriptFunction);
 #else
 		ScriptWarning("[CScriptSystem::SetEnvironment] Function %d not found", scriptFunction);
@@ -2247,7 +2246,7 @@ IScriptTable* CScriptSystem::GetEnvironment(HSCRIPTFUNCTION scriptFunction)
 
 	if (!lua_isfunction(L, -1))
 	{
-#if defined(CRY_COMPILER_GCC)
+#if defined(CRY_COMPILER_GCC) || defined(CRY_COMPILER_CLANG)
 		ScriptWarning("[CScriptSystem::SetEnvironment] Function %d not found", (int)(INT_PTR)scriptFunction);
 #else
 		ScriptWarning("[CScriptSystem::SetEnvironment] Function %d not found", scriptFunction);

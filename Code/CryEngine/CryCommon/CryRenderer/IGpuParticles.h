@@ -128,6 +128,7 @@ enum EFeatureUpdateFlags
 // Includes InitializationParams, a subset of ParticleParams, and UpdateFlags
 struct SUpdateParams : SParticleInitializationParameters
 {
+	float  deltaTime;
 	float  lifeTime;
 	Quat   emitterOrientation;
 	Vec3   emitterPosition;
@@ -295,7 +296,7 @@ public:
 		InternalSetParameters(Parameters::type, parameters);
 	}
 protected:
-	virtual void InternalSetParameters(const EParameterType type, const SFeatureParametersBase& p) {};
+	virtual void InternalSetParameters(const EParameterType type, const SFeatureParametersBase& p) {}
 };
 
 // interface of GPU particle system

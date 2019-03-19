@@ -43,7 +43,6 @@
 #include <CryPhysics/IDeferredCollisionEvent.h>
 #include <CryNetwork/IRemoteCommand.h>
 #include <CryGame/IGameFramework.h>
-#include <CrySystem/Profilers/FrameProfiler/FrameProfiler_JobSystem.h>
 
 #include "EntityComponentsCache.h"
 
@@ -174,8 +173,11 @@ CEntitySystem::CEntitySystem(ISystem* pSystem)
 
 	m_pEntityLoadManager = new CEntityLoadManager();
 
-	m_pPartitionGrid = new CPartitionGrid;
-	m_pProximityTriggerSystem = new CProximityTriggerSystem;
+	if (CVar::es_UseProximityTriggerSystem)
+	{
+		m_pPartitionGrid = new CPartitionGrid;
+		m_pProximityTriggerSystem = new CProximityTriggerSystem;
+	}
 
 #if defined(USE_GEOM_CACHES)
 	m_pGeomCacheAttachmentManager = new CGeomCacheAttachmentManager;
@@ -249,9 +251,12 @@ bool CEntitySystem::Init(ISystem* pSystem)
 	if (pSystem->GetIPhysicalWorld())
 		m_pPhysicsEventListener = new CPhysicsEventListener(pSystem->GetIPhysicalWorld());
 
-	//////////////////////////////////////////////////////////////////////////
-	// Should reallocate grid if level size change.
-	m_pPartitionGrid->AllocateGrid(4096, 4096);
+	if (CVar::es_UseProximityTriggerSystem)
+	{
+		//////////////////////////////////////////////////////////////////////////
+		// Should reallocate grid if level size change.
+		m_pPartitionGrid->AllocateGrid(4096, 4096);
+	}
 
 	m_bLocked = false;
 
@@ -331,8 +336,11 @@ void CEntitySystem::Reset()
 {
 	LOADING_TIME_PROFILE_SECTION;
 
-	m_pPartitionGrid->BeginReset();
-	m_pProximityTriggerSystem->BeginReset();
+	if (CVar::es_UseProximityTriggerSystem)
+	{
+		m_pPartitionGrid->BeginReset();
+		m_pProximityTriggerSystem->BeginReset();
+	}
 
 	// Flush the physics linetest and events queue
 	if (gEnv->pPhysicalWorld)
@@ -395,8 +403,11 @@ void CEntitySystem::Reset()
 
 	m_timersMap.clear();
 
-	m_pProximityTriggerSystem->Reset();
-	m_pPartitionGrid->Reset();
+	if (CVar::es_UseProximityTriggerSystem)
+	{
+		m_pProximityTriggerSystem->Reset();
+		m_pPartitionGrid->Reset();
+	}
 
 	m_pEntityLoadManager->Reset();
 }
@@ -509,6 +520,7 @@ IEntity* CEntitySystem::SpawnPreallocatedEntity(CEntity* pPrecreatedEntity, SEnt
 
 	if (!ValidateSpawnParameters(params))
 	{
+		params.spawnResult = EEntitySpawnResult::Error;
 		return nullptr;
 	}
 
@@ -516,6 +528,7 @@ IEntity* CEntitySystem::SpawnPreallocatedEntity(CEntity* pPrecreatedEntity, SEnt
 
 	if (!OnBeforeSpawn(params))
 	{
+		params.spawnResult = EEntitySpawnResult::Skipped;
 		return nullptr;
 	}
 
@@ -536,6 +549,7 @@ IEntity* CEntitySystem::SpawnPreallocatedEntity(CEntity* pPrecreatedEntity, SEnt
 		if (!params.id)
 		{
 			EntityWarning("CEntitySystem::SpawnEntity Failed, Can't spawn entity %s. ID range is full (internal error)", params.sName);
+			params.spawnResult = EEntitySpawnResult::Error;
 			return nullptr;
 		}
 	}
@@ -587,7 +601,8 @@ IEntity* CEntitySystem::SpawnPreallocatedEntity(CEntity* pPrecreatedEntity, SEnt
 		{
 			if (!InitEntity(pEntity, params))   // calls DeleteEntity() on failure
 			{
-				return NULL;
+				params.spawnResult = EEntitySpawnResult::Error;
+				return nullptr;
 			}
 		}
 	}
@@ -597,6 +612,7 @@ IEntity* CEntitySystem::SpawnPreallocatedEntity(CEntity* pPrecreatedEntity, SEnt
 		CryLog("CEntitySystem::SpawnEntity %s %s 0x%x", pEntity ? pEntity->GetClass()->GetName() : "null", pEntity ? pEntity->GetName() : "null", pEntity ? pEntity->GetId() : 0);
 	}
 
+	params.spawnResult = EEntitySpawnResult::Success;
 	return pEntity;
 }
 
@@ -928,16 +944,19 @@ int CEntitySystem::GetPhysicalEntitiesInBox(const Vec3& origin, float radius, IP
 //////////////////////////////////////////////////////////////////////////
 int CEntitySystem::QueryProximity(SEntityProximityQuery& query)
 {
-	SPartitionGridQuery q;
-	q.aabb = query.box;
-	q.nEntityFlags = query.nEntityFlags;
-	q.pEntityClass = query.pEntityClass;
-	m_pPartitionGrid->GetEntitiesInBox(q);
-	query.pEntities = 0;
-	query.nCount = (int)q.pEntities->size();
-	if (q.pEntities && query.nCount > 0)
+	if (CVar::es_UseProximityTriggerSystem)
 	{
-		query.pEntities = q.pEntities->data();
+		SPartitionGridQuery q;
+		q.aabb = query.box;
+		q.nEntityFlags = query.nEntityFlags;
+		q.pEntityClass = query.pEntityClass;
+		m_pPartitionGrid->GetEntitiesInBox(q);
+		query.pEntities = 0;
+		query.nCount = (int)q.pEntities->size();
+		if (q.pEntities && query.nCount > 0)
+		{
+			query.pEntities = q.pEntities->data();
+		}
 	}
 	return query.nCount;
 }
@@ -946,7 +965,6 @@ int CEntitySystem::QueryProximity(SEntityProximityQuery& query)
 void CEntitySystem::PrePhysicsUpdate()
 {
 	CRY_PROFILE_REGION(PROFILE_ENTITY, "EntitySystem::PrePhysicsUpdate");
-	CRYPROFILE_SCOPE_PROFILE_MARKER("EntitySystem::PrePhysicsUpdate");
 	MEMSTAT_FUNCTION_CONTEXT(EMemStatContextTypes::MSC_Other);
 
 	SEntityEvent event(ENTITY_EVENT_PREPHYSICSUPDATE);
@@ -1000,7 +1018,6 @@ void CEntitySystem::PrePhysicsUpdate()
 void CEntitySystem::Update()
 {
 	CRY_PROFILE_REGION(PROFILE_ENTITY, "EntitySystem::Update");
-	CRYPROFILE_SCOPE_PROFILE_MARKER("EntitySystem::Update");
 	MEMSTAT_FUNCTION_CONTEXT(EMemStatContextTypes::MSC_Other);
 
 	const float fFrameTime = gEnv->pTimer->GetFrameTime();
@@ -1015,8 +1032,11 @@ void CEntitySystem::Update()
 
 		UpdateEntityComponents(fFrameTime);
 
-		// Update info on proximity triggers.
-		m_pProximityTriggerSystem->Update();
+		if (CVar::es_UseProximityTriggerSystem)
+		{
+			// Update info on proximity triggers.
+			m_pProximityTriggerSystem->Update();
+		}
 
 		// Now update area manager to send enter/leave events from areas.
 		m_pAreaManager->Update();
@@ -1027,23 +1047,26 @@ void CEntitySystem::Update()
 			DeletePendingEntities();
 		}
 
-		for (THeaps::iterator it = m_garbageLayerHeaps.begin(); it != m_garbageLayerHeaps.end(); )
 		{
-			SEntityLayerGarbage& lg = *it;
-			if (lg.pHeap->Cleanup())
+			CRY_PROFILE_SECTION(PROFILE_ENTITY, "Delete garbage layer heaps");
+			for (THeaps::iterator it = m_garbageLayerHeaps.begin(); it != m_garbageLayerHeaps.end(); )
 			{
-				lg.pHeap->Release();
-				it = m_garbageLayerHeaps.erase(it);
-			}
-			else
-			{
-				++lg.nAge;
-				if (lg.nAge == 32)
+				SEntityLayerGarbage& lg = *it;
+				if (lg.pHeap->Cleanup())
 				{
-					CryWarning(VALIDATOR_MODULE_ENTITYSYSTEM, VALIDATOR_WARNING, "Layer '%s', heap %p, has gone for %i frames without releasing its heap. Possible leak?", lg.layerName.c_str(), lg.pHeap, lg.nAge);
+					lg.pHeap->Release();
+					it = m_garbageLayerHeaps.erase(it);
 				}
+				else
+				{
+					++lg.nAge;
+					if (lg.nAge == 32)
+					{
+						CryWarning(VALIDATOR_MODULE_ENTITYSYSTEM, VALIDATOR_WARNING, "Layer '%s', heap %p, has gone for %i frames without releasing its heap. Possible leak?", lg.layerName.c_str(), lg.pHeap, lg.nAge);
+					}
 
-				++it;
+					++it;
+				}
 			}
 		}
 
@@ -1151,7 +1174,6 @@ std::array<const char*, static_cast<size_t>(Cry::Entity::EEvent::Count)> s_event
 void CEntitySystem::UpdateEntityComponents(float fFrameTime)
 {
 	CRY_PROFILE_REGION(PROFILE_ENTITY, "EntitySystem::UpdateEntityComponents");
-	CRYPROFILE_SCOPE_PROFILE_MARKER("EntitySystem::UpdateEntityComponents");
 
 	SEntityUpdateContext ctx = { fFrameTime, gEnv->pTimer->GetCurrTime(), gEnv->nMainFrameID };
 
@@ -1674,68 +1696,74 @@ void CEntitySystem::UpdateTimers()
 	const EntityTimersMap::const_iterator last = m_timersMap.upper_bound(currentTime);
 	if (last != first)
 	{
-		// Make a separate list, because OnTrigger call can modify original timers map.
-		m_currentTimers.clear();
-		m_currentTimers.reserve(std::distance(first, last));
-
-		for (EntityTimersMap::const_iterator it = first; it != last; ++it)
 		{
-			m_currentTimers.emplace_back(it->second);
+			CRY_PROFILE_REGION(PROFILE_ENTITY, "Split");
+			// Make a separate list, because OnTrigger call can modify original timers map.
+			m_currentTimers.clear();
+			m_currentTimers.reserve(std::distance(first, last));
+
+			for (EntityTimersMap::const_iterator it = first; it != last; ++it)
+			{
+				m_currentTimers.emplace_back(it->second);
+			}
+
+			// Delete these items from map.
+			m_timersMap.erase(first, last);
+
+			//////////////////////////////////////////////////////////////////////////
+			// Execute OnTimer events.
 		}
 
-		// Delete these items from map.
-		m_timersMap.erase(first, last);
-
-		//////////////////////////////////////////////////////////////////////////
-		// Execute OnTimer events.
-
-		SEntityEvent entityEvent;
-		entityEvent.event = ENTITY_EVENT_TIMER;
+		{
+			CRY_PROFILE_REGION(PROFILE_ENTITY, "SendEvent");
+			SEntityEvent entityEvent;
+			entityEvent.event = ENTITY_EVENT_TIMER;
 
 #ifdef ENABLE_PROFILING_CODE
-		if (CVar::es_profileComponentUpdates != 0)
-		{
-			const CTimeValue timeBeforeTimerEvents = gEnv->pTimer->GetAsyncTime();
-			const uint8 eventIndex = CEntity::GetEntityEventIndex(entityEvent.event);
+			if (CVar::es_profileComponentUpdates != 0)
+			{
+				const CTimeValue timeBeforeTimerEvents = gEnv->pTimer->GetAsyncTime();
+				const uint8 eventIndex = CEntity::GetEntityEventIndex(entityEvent.event);
 
+				for (const SEntityTimerEvent& event : m_currentTimers)
+				{
+					// Send Timer event to the entity.
+					entityEvent.nParam[0] = event.nTimerId;
+					entityEvent.nParam[1] = event.nMilliSeconds;
+
+					const CTimeValue timeBeforeTimerEvent = gEnv->pTimer->GetAsyncTime();
+
+					const CEntity* const pEntity = GetEntityFromID(event.entityId);
+					// Cache entity info before sending the event, as the entity may be removed by the event
+					const SProfiledEntityEvent::SEntityInfo listenerEntityInfo = pEntity != nullptr ? SProfiledEntityEvent::SEntityInfo(*pEntity) : SProfiledEntityEvent::SEntityInfo();
+
+					event.pListener->ProcessEvent(entityEvent);
+
+					const CTimeValue timeAfterTimerEvent = gEnv->pTimer->GetAsyncTime();
+					const float timerEventCostMs = (timeAfterTimerEvent - timeBeforeTimerEvent).GetMilliSeconds();
+
+					if (timerEventCostMs > m_profiledEvents[eventIndex].mostExpensiveEntityCostMs)
+					{
+						m_profiledEvents[eventIndex].mostExpensiveEntityCostMs = timerEventCostMs;
+						m_profiledEvents[eventIndex].mostExpensiveEntity = listenerEntityInfo;
+					}
+				}
+
+				const CTimeValue timeAfterTimerEvents = gEnv->pTimer->GetAsyncTime();
+
+				m_profiledEvents[eventIndex].numEvents = m_currentTimers.size();
+				m_profiledEvents[eventIndex].totalCostMs = (timeAfterTimerEvents - timeBeforeTimerEvents).GetMilliSeconds();
+			}
+			else
+#endif
 			for (const SEntityTimerEvent& event : m_currentTimers)
 			{
 				// Send Timer event to the entity.
 				entityEvent.nParam[0] = event.nTimerId;
 				entityEvent.nParam[1] = event.nMilliSeconds;
 
-				const CTimeValue timeBeforeTimerEvent = gEnv->pTimer->GetAsyncTime();
-
-				const CEntity* const pEntity = GetEntityFromID(event.entityId);
-				// Cache entity info before sending the event, as the entity may be removed by the event
-				const SProfiledEntityEvent::SEntityInfo listenerEntityInfo = pEntity != nullptr ? SProfiledEntityEvent::SEntityInfo(*pEntity) : SProfiledEntityEvent::SEntityInfo();
-
 				event.pListener->ProcessEvent(entityEvent);
-
-				const CTimeValue timeAfterTimerEvent = gEnv->pTimer->GetAsyncTime();
-				const float timerEventCostMs = (timeAfterTimerEvent - timeBeforeTimerEvent).GetMilliSeconds();
-
-				if (timerEventCostMs > m_profiledEvents[eventIndex].mostExpensiveEntityCostMs)
-				{
-					m_profiledEvents[eventIndex].mostExpensiveEntityCostMs = timerEventCostMs;
-					m_profiledEvents[eventIndex].mostExpensiveEntity = listenerEntityInfo;
-				}
 			}
-
-			const CTimeValue timeAfterTimerEvents = gEnv->pTimer->GetAsyncTime();
-
-			m_profiledEvents[eventIndex].numEvents = m_currentTimers.size();
-			m_profiledEvents[eventIndex].totalCostMs = (timeAfterTimerEvents - timeBeforeTimerEvents).GetMilliSeconds();
-		}
-		else
-#endif
-		for (const SEntityTimerEvent& event : m_currentTimers)
-		{
-			// Send Timer event to the entity.
-			entityEvent.nParam[0] = event.nTimerId;
-			entityEvent.nParam[1] = event.nMilliSeconds;
-
-			event.pListener->ProcessEvent(entityEvent);
 		}
 	}
 }
@@ -1848,6 +1876,8 @@ void CEntitySystem::RemoveEntityLayerListener(const char* szLayerName, IEntityLa
 //////////////////////////////////////////////////////////////////////////
 void CEntitySystem::DebugDraw()
 {
+	CRY_PROFILE_FUNCTION(PROFILE_ENTITY);
+
 	const CVar::EEntityDebugDrawType drawMode = CVar::es_EntityDebugDraw;
 
 	// Check if we have to iterate through all entities to debug draw information.
@@ -1879,7 +1909,7 @@ void CEntitySystem::DebugDraw()
 		}
 	}
 
-	if (CVar::pDrawAreas->GetIVal() != 0 || CVar::pDrawAreaDebug->GetIVal() != 0)
+	if (CVar::pDrawAreas->GetIVal() != 0 || CVar::pDrawAreaDebug->GetIVal() != 0 || CVar::pLogAreaDebug->GetIVal() != 0)
 	{
 		m_pAreaManager->DrawAreas(gEnv->pSystem);
 	}
@@ -2187,25 +2217,114 @@ void CEntitySystem::DebugDrawEntityUsage()
 }
 
 //////////////////////////////////////////////////////////////////////////
-void CEntitySystem::DebugDrawLayerInfo()
-{
 
 #ifdef ENABLE_PROFILING_CODE
+namespace
+{
+	struct SLayerDesc
+	{
+		SLayerDesc(CEntityLayer* pLayer)
+			: pLayer(pLayer)
+		{}
+		typedef std::vector<SLayerDesc> TLayerDescs;
+		CEntityLayer* pLayer;
+		TLayerDescs childLayers;
+	};
 
+	typedef std::vector<SLayerDesc> TParentLayers;
+	typedef std::vector<CEntityLayer*> TLayerPtrs;
+
+	SLayerDesc* FindLayerDesc(SLayerDesc& inLayerDesc, CEntityLayer* pLayer)
+	{
+		SLayerDesc* pOutLayer = nullptr;
+		if (pLayer == inLayerDesc.pLayer)
+		{
+			pOutLayer = &inLayerDesc;
+		}
+		else
+		{
+			for (SLayerDesc& layerDesc : inLayerDesc.childLayers)
+			{
+				pOutLayer = FindLayerDesc(layerDesc, pLayer);
+				if (pOutLayer)
+					break;
+			}
+		}
+		return pOutLayer;
+	}
+
+	SLayerDesc* FindLayerDesc(TParentLayers& parentLayers, CEntityLayer* pLayer)
+	{
+		SLayerDesc* pOutLayer = nullptr;
+		for (SLayerDesc& layerDesc : parentLayers)
+		{
+			pOutLayer = FindLayerDesc(layerDesc, pLayer);
+			if (pOutLayer)
+				break;
+		}
+		return pOutLayer;
+	}
+
+	// lambda contract: [](const SLayerDesc& layerDesc, size_t level) -> bool
+	// return true to stop the loop
+	template <typename TLayerDescFunctor>
+	bool ForEachLayerDesc(const SLayerDesc& inLayerDesc, TLayerDescFunctor func, size_t level = 0)
+	{
+		if (func(inLayerDesc, level))
+			return true;
+		
+		for (const SLayerDesc& layerDesc : inLayerDesc.childLayers)
+		{
+			if (ForEachLayerDesc(layerDesc, func, level + 1))
+				return true;
+		}
+		return false;
+	}
+
+	template <typename TLayerDescFunctor>
+	bool ForEachLayerDesc(const TParentLayers& parentLayers, TLayerDescFunctor func)
+	{
+		for (const SLayerDesc& layerDesc : parentLayers)
+		{
+			if (ForEachLayerDesc(layerDesc, func))
+				return true;
+		}
+		return false;
+	}
+}
+#endif
+
+void CEntitySystem::DebugDrawLayerInfo()
+{
+#ifdef ENABLE_PROFILING_CODE
 	bool shouldRenderAllLayerStats = CVar::es_LayerDebugInfo >= 2;
 	bool shouldRenderMemoryStats = CVar::es_LayerDebugInfo == 3;
+	bool shouldRenderWithoutFolder = CVar::es_LayerDebugInfo == 4;
 	bool shouldShowLayerActivation = CVar::es_LayerDebugInfo == 5;
 
-	float tx = 0;
-	float ty = 30;
-	float ystep = 12.0f;
+	const float xstep = 480.f;
+	const float ystep = 12.0f;
+	const float ybegin = 30.f;
+	float tx = 0.f;
+	float ty = ybegin;
 	ColorF clText(0, 1, 1, 1);
+	IRenderAuxGeom* pRenderAux = IRenderAuxGeom::GetAux();
+	const float screenHeight = float(pRenderAux->GetCamera().GetViewSurfaceZ());
+
+	auto AdjustTextPos = [=](float& tx, float& ty)
+	{
+		if (!shouldRenderMemoryStats && (ty + ystep * 2.f) > screenHeight)
+		{
+			tx += xstep;
+			ty = ybegin;
+		}
+	};
 
 	if (shouldShowLayerActivation) // Show which layer was switched on or off
 	{
 		const float fShowTime = 10.0f; // 10 seconds
 		float fCurTime = gEnv->pTimer->GetCurrTime();
-		float fPrevTime = 0;
+		float fPrevTime = 0.f;
 		std::vector<SLayerProfile>::iterator ppClearProfile = m_layerProfiles.end();
 		for (std::vector<SLayerProfile>::iterator ppProfiles = m_layerProfiles.begin(); ppProfiles != m_layerProfiles.end(); ++ppProfiles)
 		{
@@ -2213,21 +2332,21 @@ void CEntitySystem::DebugDrawLayerInfo()
 			CEntityLayer* pLayer = profile.pLayer;
 
 			ColorF clTextProfiledTime(0, 1, 1, 1);
-			if (profile.fTimeMS > 50)  // Red color for more then 50 ms
+			if (profile.fTimeMS > 50.f)  // Red color for more then 50 ms
 				clTextProfiledTime = ColorF(1, 0.3f, 0.3f, 1);
-			else if (profile.fTimeMS > 10)    // Yellow color for more then 10 ms
+			else if (profile.fTimeMS > 10.f)    // Yellow color for more then 10 ms
 				clTextProfiledTime = ColorF(1, 1, 0.3f, 1);
 
 			if (!profile.isEnable)
 				clTextProfiledTime -= ColorF(0.3f, 0.3f, 0.3f, 0);
 
-			float xstep = 0.0f;
+			float xindent = 0.0f;
 			if (strlen(pLayer->GetParentName()) > 0)
 			{
-				xstep += 20;
+				xindent += 20.f;
 				const IEntityLayer* const pParentLayer = FindLayer(pLayer->GetParentName());
 				if (pParentLayer && strlen(pParentLayer->GetParentName()) > 0)
-					xstep += 20;
+					xindent += 20.f;
 			}
 			if (profile.fTimeOn != fPrevTime)
 			{
@@ -2235,31 +2354,14 @@ void CEntitySystem::DebugDrawLayerInfo()
 				fPrevTime = profile.fTimeOn;
 			}
 
-			DrawText(tx + xstep, ty += ystep, clTextProfiledTime, "%.1f ms: %s (%s)", profile.fTimeMS, pLayer->GetName(), profile.isEnable ? "On" : "Off");
+			AdjustTextPos(tx, ty);
+			DrawText(tx + xindent, ty += ystep, clTextProfiledTime, "%.1f ms: %s (%s)", profile.fTimeMS, pLayer->GetName(), profile.isEnable ? "On" : "Off");
 			if (ppClearProfile == m_layerProfiles.end() && fCurTime - profile.fTimeOn > fShowTime)
 				ppClearProfile = ppProfiles;
 		}
 		if (ppClearProfile != m_layerProfiles.end())
 			m_layerProfiles.erase(ppClearProfile, m_layerProfiles.end());
 		return;
-	}
-
-	typedef std::map<string, std::vector<CEntityLayer*>> TParentLayerMap;
-	TParentLayerMap parentLayers;
-
-	for (TLayers::iterator it = m_layers.begin(); it != m_layers.end(); ++it)
-	{
-		CEntityLayer* pLayer = it->second;
-		if (strlen(pLayer->GetParentName()) == 0)
-		{
-			TParentLayerMap::iterator itFindRes = parentLayers.find(pLayer->GetName());
-			if (itFindRes == parentLayers.end())
-				parentLayers[pLayer->GetName()] = std::vector<CEntityLayer*>();
-		}
-		else
-		{
-			parentLayers[pLayer->GetParentName()].push_back(pLayer);
-		}
 	}
 
 	SLayerPakStats layerPakStats;
@@ -2271,6 +2373,7 @@ void CEntitySystem::DebugDrawLayerInfo()
 
 	if (shouldShowLayerActivation)
 	{
+		AdjustTextPos(tx, ty);
 		DrawText(tx, ty += ystep, clText, "Layer Pak Stats: %1.1f MB / %1.1f MB)",
 			(float)layerPakStats.m_UsedSize / (1024.f * 1024.f),
 			(float)layerPakStats.m_MaxSize / (1024.f * 1024.f));
@@ -2279,10 +2382,11 @@ void CEntitySystem::DebugDrawLayerInfo()
 		{
 			SLayerPakStats::SEntry& entry = *it;
 
+			AdjustTextPos(tx, ty);
 			DrawText(tx, ty += ystep, clText, "  %20s: %1.1f MB - %s)", entry.name.c_str(),
 				(float)entry.nSize / (1024.f * 1024.f), entry.status.c_str());
 		}
-		ty += ystep;
+		AdjustTextPos(tx, ty);
 		DrawText(tx, ty += ystep, clText, "All Layers:");
 	}
 	else
@@ -2291,6 +2395,7 @@ void CEntitySystem::DebugDrawLayerInfo()
 		if (shouldRenderAllLayerStats)
 			tmp = "All Layers";
 
+		AdjustTextPos(tx, ty);
 		DrawText(tx, ty += ystep, clText, "%s (PakInfo: %1.1f MB / %1.1f MB):", tmp.c_str(),
 			(float)layerPakStats.m_UsedSize / (1024.f * 1024.f),
 			(float)layerPakStats.m_MaxSize / (1024.f * 1024.f));
@@ -2302,12 +2407,58 @@ void CEntitySystem::DebugDrawLayerInfo()
 	if (shouldRenderMemoryStats)
 		pSizer = gEnv->pSystem->CreateSizer();
 
-	for (TParentLayerMap::iterator it = parentLayers.begin(); it != parentLayers.end(); ++it)
-	{
-		const string& parentName = it->first;
-		std::vector<CEntityLayer*>& children = it->second;
+	std::vector<bool> layerUsed;
+	TLayerPtrs layerPtrs;
+	TParentLayers parentLayers;
 
-		IEntityLayer* pParent = FindLayer(parentName);
+	// Populate temporary flat layer storage
+	// This has some unnecessary expense per each frame
+	layerPtrs.reserve(m_layers.size());
+	layerUsed.reserve(m_layers.size());
+	for (const TLayers::value_type& layerPair : m_layers)
+	{
+		layerPtrs.push_back(layerPair.second);
+		layerUsed.push_back(false);
+	}
+
+	const size_t layersCount = layerPtrs.size();
+	const size_t layersLast = layersCount - 1;
+	size_t layersUsed = 0;
+
+	// Populate hierarchy of layers
+	for (size_t i = 0; layersUsed != layersCount; ++i)
+	{
+		if (i > layersLast)
+			i = 0;
+
+		if (layerUsed[i])
+			continue;
+
+		CEntityLayer* pLayer = layerPtrs[i];
+		CEntityLayer* pParentLayer = static_cast<CEntityLayer*>(FindLayer(pLayer->GetParentName()));
+
+		if (pParentLayer)
+		{
+			SLayerDesc* pLayerDesc = FindLayerDesc(parentLayers, pParentLayer);
+			if (pLayerDesc)
+			{
+				pLayerDesc->childLayers.emplace_back(pLayer);
+				layerUsed[i] = true;
+				layersUsed++;
+			}
+		}
+		else
+		{
+			parentLayers.emplace_back(pLayer);
+			layerUsed[i] = true;
+			layersUsed++;
+		}
+	}
+
+	for (const SLayerDesc& layerDesc : parentLayers)
+	{
+		CEntityLayer* pParent = layerDesc.pLayer;
+		const char* szParentName = pParent->GetName();
 
 		bool bIsEnabled = false;
 		if (shouldRenderAllLayerStats)
@@ -2316,21 +2467,15 @@ void CEntitySystem::DebugDrawLayerInfo()
 		}
 		else
 		{
-			if (pParent)
-				bIsEnabled = pParent->IsEnabledBrush();
-
-			if (!bIsEnabled)
+			ForEachLayerDesc(layerDesc, [&](const SLayerDesc& inLayerDesc, size_t level)
 			{
-				for (size_t i = 0; i < children.size(); ++i)
+				if (inLayerDesc.pLayer->IsEnabledBrush())
 				{
-					CEntityLayer* pChild = children[i];
-					if (pChild->IsEnabledBrush())
-					{
-						bIsEnabled = true;
-						break;
-					}
-				}
-			}
+					bIsEnabled = true;
+					return true;
+				}	
+				return false;
+			});
 		}
 
 		if (!bIsEnabled)
@@ -2340,7 +2485,7 @@ void CEntitySystem::DebugDrawLayerInfo()
 		for (SLayerPakStats::TEntries::iterator it2 = layerPakStats.m_entries.begin();
 			it2 != layerPakStats.m_entries.end(); ++it2)
 		{
-			if (it2->name == parentName)
+			if (it2->name == szParentName)
 			{
 				pLayerPakEntry = &(*it2);
 				break;
@@ -2349,17 +2494,22 @@ void CEntitySystem::DebugDrawLayerInfo()
 
 		if (pLayerPakEntry)
 		{
-			DrawText(tx, ty += ystep, clText, "%s (PakInfo - %1.1f MB - %s)", parentName.c_str(),
+			AdjustTextPos(tx, ty);
+			DrawText(tx, ty += ystep, clText, "%s (PakInfo - %1.1f MB - %s)", szParentName,
 				(float)pLayerPakEntry->nSize / (1024.f * 1024.f), pLayerPakEntry->status.c_str());
 		}
-		else
-		{
-			DrawText(tx, ty += ystep, clText, "%s", parentName.c_str());
-		}
 
-		for (size_t i = 0; i < children.size(); ++i)
+		ForEachLayerDesc(layerDesc, [&](const SLayerDesc& inLayerDesc, size_t level)
 		{
-			CEntityLayer* pChild = children[i];
+			if (pLayerPakEntry && level == 0)
+				return false;
+
+			if (shouldRenderWithoutFolder && !inLayerDesc.childLayers.empty())
+				return false;
+
+			stack_string levelStr(level, '.');
+			CEntityLayer* pChild = inLayerDesc.pLayer;
+			const char* szChildName = pChild->GetName();
 
 			if (shouldRenderAllLayerStats)
 			{
@@ -2369,15 +2519,15 @@ void CEntitySystem::DebugDrawLayerInfo()
 				{
 					// a layer was not disabled by Flowgraph in time when level is starting
 					state = "was not disabled";
-					clTextState = ColorF(1, 0.3f, 0.3f, 1);  // redish
+					clTextState = ColorF(1, 0.3f, 0.3f, 1);
 				}
 				else if (!pChild->IsEnabled())
 				{
 					state = "disabled";
-					clTextState = ColorF(0.7f, 0.7f, 0.7f, 1);  // grayish
+					clTextState = ColorF(0.7f, 0.7f, 0.7f, 1);
 				}
-				ty += ystep;
-				DrawText(tx, ty, clTextState, "  %s (%s)", pChild->GetName(), state);
+				AdjustTextPos(tx, ty);
+				DrawText(tx, ty += ystep, clTextState, "%s%s (%s)", levelStr.c_str(), szChildName, state);
 
 				if (shouldRenderMemoryStats && pSizer)
 				{
@@ -2389,8 +2539,8 @@ void CEntitySystem::DebugDrawLayerInfo()
 					int numEntities;
 					pChild->GetMemoryUsage(pSizer, &numEntities);
 					const float memorySize = float(pSizer->GetTotalSize()) / 1024.f;
-
 					const int kColumnPos = 350;
+
 					if (numDecals)
 						DrawText(tx + kColumnPos, ty, clTextState, "Brushes: %d, Decals: %d, Entities: %d; Mem: %.2f Kb", numBrushes, numDecals, numEntities, memorySize);
 					else
@@ -2399,9 +2549,12 @@ void CEntitySystem::DebugDrawLayerInfo()
 			}
 			else if (pChild->IsEnabledBrush())
 			{
-				DrawText(tx, ty += ystep, clText, "  %s", pChild->GetName());
+				AdjustTextPos(tx, ty);
+				DrawText(tx, ty += ystep, clText, "%s%s", levelStr.c_str(), szChildName);
 			}
-		}
+
+			return false;
+		});
 	}
 
 	SAFE_RELEASE(pSizer);
@@ -3212,6 +3365,8 @@ void CEntitySystem::DumpEntity(CEntity* pEntity)
 
 void CEntitySystem::DeletePendingEntities()
 {
+	CRY_PROFILE_FUNCTION(PROFILE_ENTITY);
+
 	while (!m_deletedEntities.empty())
 	{
 		CEntity* pEntity = m_deletedEntities.back();
@@ -3463,6 +3618,44 @@ void CEntitySystem::EnableLayerSet(const char* const* pLayers, size_t layerCount
 	}
 }
 
+void CEntitySystem::EnableScopedLayerSet(const char* const* pLayers, size_t layerCount, const char* const* pScopeLayers, size_t scopeLayerCount, bool isSerialized, IEntityLayerSetUpdateListener* pListener)
+{
+	if (!gEnv->p3DEngine->IsAreaActivationInUse())
+		return;
+
+	const char* const* const pVisibleLayersBegin = pLayers;
+	const char* const* const pVisibleLayersEnd = pLayers + layerCount;
+
+	const char* const* const pScopeLayersBegin = pScopeLayers;
+	const char* const* const pScopeLayersEnd = pScopeLayers + scopeLayerCount;
+
+	const TLayers::iterator layersEndIt = m_layers.end();
+
+	for(const char* const* pScopeLayersIt = pScopeLayersBegin; pScopeLayersIt != pScopeLayersEnd; ++pScopeLayersIt)
+	{
+		const char* const scopeLayerName = *pScopeLayersIt;
+		const bool shouldBeEnabled = std::find_if(pVisibleLayersBegin, pVisibleLayersEnd, [scopeLayerName](const char* szLayerName)
+		{
+			return 0 == strcmp(scopeLayerName, szLayerName);;
+		}) != pVisibleLayersEnd;
+
+		TLayers::iterator it = m_layers.find(CONST_TEMP_STRING(scopeLayerName));
+		if(layersEndIt != it)
+		{
+			CEntityLayer* pLayer = it->second;
+			if(shouldBeEnabled != pLayer->IsEnabled())
+			{
+				EnableLayer(pLayer, shouldBeEnabled, isSerialized, false);
+			}
+
+			if(pListener)
+			{
+				pListener->LayerEnablingEvent(scopeLayerName, shouldBeEnabled, isSerialized);
+			}
+		}
+	}
+}
+
 //////////////////////////////////////////////////////////////////////////
 bool CEntitySystem::IsLayerEnabled(const char* layer, bool bMustBeLoaded, bool bCaseSensitive) const
 {
@@ -3584,6 +3777,8 @@ void CEntitySystem::AddStaticEntityId(const EntityId id, StaticEntityNetworkIden
 
 void CEntitySystem::PurgeDeferredCollisionEvents(bool force)
 {
+	CRY_PROFILE_FUNCTION(PROFILE_ENTITY);
+
 	for (std::vector<CEntity*>::iterator it = m_deferredUsedEntities.begin(); it != m_deferredUsedEntities.end();)
 	{
 		CEntity* pEntity = *it;

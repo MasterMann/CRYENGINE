@@ -13,7 +13,7 @@
 class CREBaker : public CRenderElement
 {
 private:
-	CRenderElement*                    m_pSrc;
+	CRenderElement*                  m_pSrc;
 	std::vector<IIndexedMesh*>       m_pDst;
 	CMesh*                           m_pSrcMesh;
 	int                              m_nPhase;
@@ -46,7 +46,7 @@ public:
 	virtual bool               mfIsHWSkinned()                                                                         { return m_pSrc->mfIsHWSkinned(); }
 	virtual CRenderElement*    mfCopyConstruct(void)                                                                   { return m_pSrc->mfCopyConstruct(); }
 	virtual void               mfCenter(Vec3& centr, CRenderObject* pObj, const SRenderingPassInfo& passInfo)          { m_pSrc->mfCenter(centr, pObj, passInfo); }
-	virtual void               mfGetBBox(Vec3& vMins, Vec3& vMaxs) const                                               { m_pSrc->mfGetBBox(vMins, vMaxs); }
+	virtual void               mfGetBBox(AABB& bb) const                                                               { m_pSrc->mfGetBBox(bb); }
 	virtual void               mfGetPlane(Plane& pl)                                                                   { m_pSrc->mfGetPlane(pl); }
 
 	virtual void*              mfGetPointer(ESrcPointer ePT, int* Stride, EParamType Type, ESrcPointer Dst, EStreamMasks StreamMask) { return m_pSrc->mfGetPointer(ePT, Stride, Type, Dst, StreamMask); }
@@ -377,21 +377,21 @@ static IMaterial* PatchMaterial(IMaterial* pMat)
 
 static void EtchAlphas(std::vector<IIndexedMesh*> outputList, IMaterial* pMaterial, const SMeshBakingMaterialParams* params, int numParams)
 {
-	CD3D9Renderer* const __restrict rd = gcpRendD3D;
+	//CD3D9Renderer* const __restrict rd = gcpRendD3D;
 
 	if (outputList.empty())
 		return;
 
-	int i = 0;
+	//int i = 0;
 	for (std::vector<IIndexedMesh*>::iterator mit = outputList.begin(), mend = outputList.end(); mit != mend; ++mit)
 	{
 		IIndexedMesh* pOutput = *mit;
 		if (!pOutput)
 			continue;
-		int numOutputTriangles = pOutput->GetIndexCount() / 3;
-		CMesh* pOutputMesh = pOutput->GetMesh();
-		vtx_idx* pOutIndices = pOutputMesh->GetStreamPtr<vtx_idx>(CMesh::INDICES);
-		SMeshTexCoord* pOutTexCoords = pOutputMesh->GetStreamPtr<SMeshTexCoord>(CMesh::TEXCOORDS);
+		//int numOutputTriangles = pOutput->GetIndexCount() / 3;
+		//CMesh* pOutputMesh = pOutput->GetMesh();
+		//vtx_idx* pOutIndices = pOutputMesh->GetStreamPtr<vtx_idx>(CMesh::INDICES);
+		//SMeshTexCoord* pOutTexCoords = pOutputMesh->GetStreamPtr<SMeshTexCoord>(CMesh::TEXCOORDS);
 
 		// OLD PIPELINE
 		ASSERT_LEGACY_PIPELINE
@@ -734,7 +734,7 @@ bool CD3D9Renderer::BakeMesh(const SMeshBakingInputParams* pInputParams, SMeshBa
 			pBakeMaterial.push_back(PatchMaterial(*it)); // Replace current shader with MeshBake
 		}
 
-		CTexture* pTmpDepthSurface = CreateDepthTarget(outputWidth, outputHeight, Clr_Empty, eTF_Unknown);
+		CTexture* pTmpDepthSurface = CRendererResources::CreateDepthTarget(outputWidth, outputHeight, Clr_Empty, eTF_Unknown);
 		if (!pTmpDepthSurface)
 		{
 			CryLog("BakeMesh: Failed as temporary depth surface could not be created of size %dx%d\n", outputWidth, outputHeight);

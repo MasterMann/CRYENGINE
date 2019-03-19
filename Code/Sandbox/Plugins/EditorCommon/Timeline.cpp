@@ -6,7 +6,7 @@
 #include "DrawingPrimitives/TimeSlider.h"
 #include "CryIcon.h"
 #include "EditorStyleHelper.h"
-#include "ICommandManager.h"
+#include "Commands/ICommandManager.h"
 #include <IEditor.h>
 
 #include "QSearchBox.h"
@@ -602,7 +602,7 @@ STrackLayout* HitTestTrack(STrackLayouts& tracks, const QPoint& point, bool bIgn
 			return y < track.rect.bottom();
 		});
 
-	if (findIter != tracks.end() && (!bIgnoreTrackRange || findIter->rect.contains(point)))
+	if (findIter != tracks.end() && (bIgnoreTrackRange || findIter->rect.contains(point)))
 	{
 		return &(*findIter);
 	}
@@ -1077,12 +1077,10 @@ void UpdateTracksRenderCache(STracksRenderCache& renderCache, QPainter& painter,
 		std::vector<SElementLayout>& layouts = trackSortedElements[j];
 
 		std::copy(std::begin(track.elements), std::end(track.elements), std::back_inserter(layouts));
-		std::sort(std::begin(layouts), std::end(layouts),
-			[](const SElementLayout& a, const SElementLayout& b)
+		std::sort(std::begin(layouts), std::end(layouts), [](const SElementLayout& a, const SElementLayout& b)
 		{
 			return a.rect.left() < b.rect.left();
-		}
-		);
+		});
 	}
 
 	for (int32 i = PASS_BACKGROUND; i <= PASS_MAIN; ++i)
@@ -1109,12 +1107,17 @@ void UpdateTracksRenderCache(STracksRenderCache& renderCache, QPainter& painter,
 			case PASS_BACKGROUND:
 				{
 					QRect backgroundRect = track.rect;
+
 					backgroundRect.setLeft(-viewState.scrollPixels.x());
 					backgroundRect.setWidth(trackRect.width());
 
 					if (track.pTimelineTrack->selected)
 					{
 						renderCache.seleTrackBGRects.emplace_back(backgroundRect);
+					}
+					else if (track.pTimelineTrack->detached)
+					{
+						renderCache.detachedTrackBGRects.emplace_back(backgroundRect);
 					}
 					else if ((track.pTimelineTrack->caps & STimelineTrack::CAP_DESCRIPTION_TRACK) != 0)
 					{
@@ -1314,6 +1317,10 @@ void UpdateTreeRenderCache(STreeRenderCache& renderCache, const QRect& treeRect,
 		{
 			renderCache.seleTrackBGRects.emplace_back(backgroundRect);
 		}
+		else if (track.pTimelineTrack->detached)
+		{
+			renderCache.detaTrackBGRects.emplace_back(backgroundRect);
+		}
 		else if ((track.pTimelineTrack->caps & STimelineTrack::CAP_DESCRIPTION_TRACK) != 0)
 		{
 			renderCache.descTrackBGRects.emplace_back(backgroundRect);
@@ -1345,7 +1352,13 @@ void UpdateTreeRenderCache(STreeRenderCache& renderCache, const QRect& treeRect,
 		const int32 textWidth = std::max(treeRect.width() - textLeft - 4, 0);
 		const QRect textRect(textLeft, track.rect.top() + 1, textWidth, track.rect.height() - 2);
 
-		renderCache.text.emplace_back(QRenderText(textRect, QString(track.pTimelineTrack->name)));
+		QString alias = QString(track.pTimelineTrack->name);
+		if (track.pTimelineTrack->detached)
+		{
+			alias = alias + " (Detached)";
+		}
+
+		renderCache.text.emplace_back(QRenderText(textRect, alias));
 
 		if (track.pTimelineTrack->HasIcon())
 		{
@@ -1661,7 +1674,7 @@ struct CTimeline::SMoveHandler : SMouseHandler
 			const QPoint currentPos(ev->pos().x(), ev->pos().y() + scroll);
 
 			QPoint posInLayoutSpace = m_timeline->m_viewState.LocalToLayout(currentPos);
-			bool bHit = HitTestElements(m_timeline->m_layout->tracks, QRect(posInLayoutSpace - QPoint(2, 2), posInLayoutSpace + QPoint(2, 2)), hitElements);
+			HitTestElements(m_timeline->m_layout->tracks, QRect(posInLayoutSpace - QPoint(2, 2), posInLayoutSpace + QPoint(2, 2)), hitElements);
 
 			if (!hitElements.empty() && !hitElements.back()->elementRef.pTrack->elements.empty())
 			{
@@ -1768,8 +1781,6 @@ struct CTimeline::SScrubHandler : SMouseHandler
 
 	void SetThumbPositionX(int positionX)
 	{
-		int nThumbEndPadding = (THUMB_WIDTH / 2) + 2;
-		float fVisualRange = float(m_timeline->m_viewState.widthPixels - nThumbEndPadding * 2);
 		SAnimTime time = SAnimTime(m_timeline->m_viewState.LayoutToTime(positionX));
 
 		m_timeline->ClampAndSetTime(time, false);
@@ -2258,6 +2269,7 @@ void CTimeline::paintEvent(QPaintEvent* ev)
 	}
 
 	const QColor trackColor = GetStyleHelper()->timelineTrackColor();
+	const QColor detachedTrackColor = GetStyleHelper()->timelineDetachedColor();
 	const QColor descriptionTrackColor = GetStyleHelper()->timelineDescriptionTrackColor();
 	const QColor compositeTrackColor = GetStyleHelper()->timelineCompositeTrackColor();
 	const QColor selectionColor = GetStyleHelper()->timelineSelectionColor();
@@ -2322,6 +2334,16 @@ void CTimeline::paintEvent(QPaintEvent* ev)
 			painter.setPen(Qt::NoPen);
 			painter.setBrush(brush);
 			PaintRenderCacheRects(painter, m_tracksRenderCache.seleTrackBGRects);
+		}
+
+		if (m_tracksRenderCache.detachedTrackBGRects.size())
+		{
+			LOADING_TIME_PROFILE_SECTION_NAMED("Detached tracks")
+
+			const QBrush brush = QBrush(detachedTrackColor);
+			painter.setPen(Qt::NoPen);
+			painter.setBrush(brush);
+			PaintRenderCacheRects(painter, m_tracksRenderCache.detachedTrackBGRects);
 		}
 
 		{
@@ -2575,6 +2597,16 @@ void CTimeline::paintEvent(QPaintEvent* ev)
 				painter.setPen(Qt::NoPen);
 				painter.setBrush(brush);
 				PaintRenderCacheRects(painter, m_treeRenderCache.seleTrackBGRects);
+			}
+
+			if (m_treeRenderCache.detaTrackBGRects.size())
+			{
+				LOADING_TIME_PROFILE_SECTION_NAMED("Detached tree tracks")
+
+				const QBrush brush = QBrush(detachedTrackColor);
+				painter.setPen(Qt::NoPen);
+				painter.setBrush(brush);
+				PaintRenderCacheRects(painter, m_treeRenderCache.detaTrackBGRects);
 			}
 
 			if (m_treeRenderCache.trackLines.size())
@@ -3303,8 +3335,6 @@ void CTimeline::ShowKeyText(bool bShow)
 void CTimeline::UpdateLayout(bool forceClamp)
 {
 	m_layout->tracks.clear();
-
-	QWidget* pParent = static_cast<QWidget*>(parent());
 	m_viewState.widthPixels = width();
 
 	if (m_treeVisible)
@@ -3562,12 +3592,6 @@ void CTimeline::OnMenuPlay()
 typedef std::vector<std::pair<SAnimTime, STimelineContentElementRef>> TimeToId;
 static void GetAllTimes(TimeToId* times, const STimelineTrack& track)
 {
-	for (size_t i = 0; i < track.elements.size(); ++i)
-	{
-		const STimelineElement& element = track.elements[i];
-
-	}
-
 	for (size_t i = 0; i < track.tracks.size(); ++i)
 	{
 		GetAllTimes(times, *track.tracks[i]);

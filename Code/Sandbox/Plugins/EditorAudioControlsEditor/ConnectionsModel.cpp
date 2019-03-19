@@ -3,9 +3,9 @@
 #include "StdAfx.h"
 #include "ConnectionsModel.h"
 
-#include "Common.h"
-#include "AudioControlsEditorPlugin.h"
-#include "ImplementationManager.h"
+#include "AssetsManager.h"
+#include "ImplManager.h"
+#include "FileImporterUtils.h"
 #include "Common/IConnection.h"
 #include "Common/IImpl.h"
 #include "Common/IItem.h"
@@ -34,7 +34,7 @@ bool ProcessDragDropData(QMimeData const* const pData, ControlIds& ids)
 			ControlId id;
 			stream >> id;
 
-			if (id != s_aceInvalidId)
+			if (id != g_invalidControlId)
 			{
 				ids.push_back(id);
 			}
@@ -45,7 +45,7 @@ bool ProcessDragDropData(QMimeData const* const pData, ControlIds& ids)
 }
 
 //////////////////////////////////////////////////////////////////////////
-bool CanDropData(QMimeData const* const pData, CAsset const* pControl)
+bool CanDropData(QMimeData const* const pData, CAsset* const pControl)
 {
 	bool canDrop = false;
 
@@ -53,6 +53,7 @@ bool CanDropData(QMimeData const* const pData, CAsset const* pControl)
 	{
 		ControlIds ids;
 
+		// Handle first if mime data is an external (from the impl side) source
 		if (ProcessDragDropData(pData, ids))
 		{
 			canDrop = true;
@@ -70,6 +71,11 @@ bool CanDropData(QMimeData const* const pData, CAsset const* pControl)
 					}
 				}
 			}
+		}
+		else if ((pControl->GetType() == EAssetType::Trigger) && (g_pIImpl->CanDropExternalData(pData)))
+		{
+			// Handle if mime data is external files that are supported by the middleware.
+			canDrop = true;
 		}
 	}
 
@@ -109,7 +115,7 @@ void CConnectionsModel::ConnectSignals()
 			}
 		}, reinterpret_cast<uintptr_t>(this));
 
-	g_implementationManager.SignalOnBeforeImplementationChange.Connect([this]()
+	g_implManager.SignalOnBeforeImplChange.Connect([this]()
 		{
 			beginResetModel();
 			m_pControl = nullptr;
@@ -117,7 +123,7 @@ void CConnectionsModel::ConnectSignals()
 			endResetModel();
 		}, reinterpret_cast<uintptr_t>(this));
 
-	g_implementationManager.SignalOnAfterImplementationChange.Connect([this]()
+	g_implManager.SignalOnAfterImplChange.Connect([this]()
 		{
 			beginResetModel();
 			ResetCache();
@@ -130,8 +136,8 @@ void CConnectionsModel::DisconnectSignals()
 {
 	g_assetsManager.SignalConnectionAdded.DisconnectById(reinterpret_cast<uintptr_t>(this));
 	g_assetsManager.SignalConnectionRemoved.DisconnectById(reinterpret_cast<uintptr_t>(this));
-	g_implementationManager.SignalOnBeforeImplementationChange.DisconnectById(reinterpret_cast<uintptr_t>(this));
-	g_implementationManager.SignalOnAfterImplementationChange.DisconnectById(reinterpret_cast<uintptr_t>(this));
+	g_implManager.SignalOnBeforeImplChange.DisconnectById(reinterpret_cast<uintptr_t>(this));
+	g_implManager.SignalOnAfterImplChange.DisconnectById(reinterpret_cast<uintptr_t>(this));
 }
 
 //////////////////////////////////////////////////////////////////////////
@@ -330,7 +336,7 @@ QVariant CConnectionsModel::headerData(int section, Qt::Orientation orientation,
 				}
 				break;
 			case Qt::DisplayRole:
-				// The notification column header uses an icons instead of text.
+				// The notification column header uses an icon instead of text.
 				if (section != static_cast<int>(EColumns::Notification))
 				{
 					variant = pAttribute->GetName();
@@ -418,7 +424,7 @@ bool CConnectionsModel::dropMimeData(QMimeData const* pData, Qt::DropAction acti
 
 		if (ProcessDragDropData(pData, ids))
 		{
-			ControlId lastConnectedId = s_aceInvalidId;
+			ControlId lastConnectedId = g_invalidControlId;
 
 			for (auto const id : ids)
 			{
@@ -445,6 +451,17 @@ bool CConnectionsModel::dropMimeData(QMimeData const* pData, Qt::DropAction acti
 			if (wasDropped)
 			{
 				SignalConnectionAdded(lastConnectedId);
+			}
+		}
+		else if ((m_pControl->GetType() == EAssetType::Trigger) && (g_pIImpl->CanDropExternalData(pData)))
+		{
+			// Handle if mime data are external files that are supported by the middleware.
+			FileImportInfos fileImportInfos;
+
+			if (g_pIImpl->DropExternalData(pData, fileImportInfos))
+			{
+				OpenFileImporter(fileImportInfos, "", false, EImportTargetType::Connections, m_pControl);
+				wasDropped = true;
 			}
 		}
 	}

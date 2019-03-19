@@ -923,7 +923,6 @@ static void BuildSphereSet(
 		base[min_axis] = centre[min_axis];
 		base[plane_axis[0]] = centre[plane_axis[0]] - size[plane_axis[0]] + size[plane_axis[0]] * 0.5f;
 		base[plane_axis[1]] = centre[plane_axis[1]] - size[plane_axis[1]] + size[plane_axis[1]] * 0.5f;
-		;
 		float radius = size[min_axis] * 1.5f;
 
 		Vec3 sphcent = pos + q * centre;
@@ -4306,7 +4305,6 @@ void CMergedMeshesManager::SortActiveInstances(const SRenderingPassInfo& passInf
 void CMergedMeshesManager::Update(const SRenderingPassInfo& passInfo)
 {
 	CRY_PROFILE_REGION(PROFILE_3DENGINE, "MergedMeshesManager: Update");
-	CRYPROFILE_SCOPE_PROFILE_MARKER("MMRMGR: update")
 
 	if (GetCVars()->e_MergedMeshes == 0 || !passInfo.IsGeneralPass())
 		return;
@@ -4350,7 +4348,6 @@ void CMergedMeshesManager::Update(const SRenderingPassInfo& passInfo)
 	// Update registered particles
 	{
 		CRY_PROFILE_REGION(PROFILE_3DENGINE, "MMRMGR: update projectiles");
-		CRYPROFILE_SCOPE_PROFILE_MARKER("MMRMGR: update projectiles");
 
 		WriteLock _lock(m_ProjectileLock);
 		size_t pi = 0, pe = m_Projectiles.size();
@@ -4370,7 +4367,6 @@ void CMergedMeshesManager::Update(const SRenderingPassInfo& passInfo)
 
 	{
 		CRY_PROFILE_REGION(PROFILE_3DENGINE, "MMRMGR: state jobsync");
-		CRYPROFILE_SCOPE_PROFILE_MARKER("MMRMGR: state jobsync");
 
 		// Maintain a sorted list of active instances - we have to wait here for the job to have completed
 		gEnv->pJobManager->WaitForJob(m_updateState);
@@ -4379,7 +4375,6 @@ void CMergedMeshesManager::Update(const SRenderingPassInfo& passInfo)
 	// Stream in instances up until main memory pool limit
 	{
 		CRY_PROFILE_REGION(PROFILE_3DENGINE, "MMRMGR: streaming");
-		CRYPROFILE_SCOPE_PROFILE_MARKER("MMRMGR: streaming");
 
 		float yPos = 8.f;
 		bool hadOverflow = m_PoolOverFlow;
@@ -5107,17 +5102,7 @@ void CMergedMeshRenderNode::OffsetPosition(const Vec3& delta)
 	m_pos += delta;
 }
 
-void CMergedMeshRenderNode::FillBBox(AABB& aabb)
-{
-	aabb = CMergedMeshRenderNode::GetBBox();
-}
-
-EERType CMergedMeshRenderNode::GetRenderNodeType()
-{
-	return eERType_MergedMesh;
-}
-
-float CMergedMeshRenderNode::GetMaxViewDist()
+float CMergedMeshRenderNode::GetMaxViewDist() const
 {
 	float radius = m_internalAABB.GetRadius();
 	return max(GetCVars()->e_ViewDistMin, radius * GetCVars()->e_MergedMeshesViewDistRatio);

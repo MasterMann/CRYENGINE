@@ -6,45 +6,51 @@ start_sources()
 sources_platform(ALL)
 add_sources("CryAudioImpl_uber_0.cpp"
 	SOURCE_GROUP "Header Files"
+		"AuxBus.h"
 		"AuxThread.h"
+		"BaseObject.h"
 		"Common.h"
 		"CVars.h"
-		"Debug.h"
-		"Environment.h"
 		"Event.h"
-		"File.h"
+		"EventInstance.h"
 		"FileIOHandler.h"
 		"GlobalData.h"
+		"GlobalObject.h"
 		"Impl.h"
 		"Listener.h"
 		"Object.h"
 		"Parameter.h"
+		"ParameterEnvironment.h"
+		"ParameterState.h"
 		"resource.h"
-		"Setting.h"
-		"StandaloneFile.h"
-		"stdafx.h"
-		"SwitchState.h"
-		"Trigger.h"
+		"SoundBank.h"
+		"State.h"
+		"Switch.h"
 	SOURCE_GROUP "Source Files"
+		"AuxBus.cpp"
 		"AuxThread.cpp"
+		"BaseObject.cpp"
 		"Common.cpp"
 		"CryAudioImpl.cpp"
 		"CVars.cpp"
-		"Debug.cpp"
-		"Environment.cpp"
 		"Event.cpp"
+		"EventInstance.cpp"
 		"FileIOHandler.cpp"
+		"GlobalObject.cpp"
 		"Impl.cpp"
 		"Listener.cpp"
 		"Object.cpp"
 		"Parameter.cpp"
-		"SwitchState.cpp"
-		"Trigger.cpp"
+		"ParameterEnvironment.cpp"
+		"ParameterState.cpp"
+		"State.cpp"
+		"Switch.cpp"
 )
 
 add_sources("NoUberFile"
 	SOURCE_GROUP "Root"
 		"stdafx.cpp"
+		"stdafx.h"
 )
 
 end_sources()
@@ -130,8 +136,10 @@ if (AUDIO_WWISE)
 		AkRecorderFX
 		AkReflectFX
 		AkRoomVerbFX
+		AkRouterMixerFX
 		AkSilenceSource
 		AkSineSource
+		AkSoundSeedGrainSource
 		AkSoundSeedImpactFX
 		AkSoundSeedWindSource
 		AkSoundSeedWooshSource
@@ -166,7 +174,7 @@ if (AUDIO_WWISE)
 
 	# TODO: ws2_32 is not needed in release builds (Wwise profiling)
 	set( WIN_LIBS Ole32 Msacm32 dinput8 Winmm dsound dxguid ws2_32 xinput )
-	set( WIN_WWISE_LIBS ${WWISE_EXTRA_PLUGIN_LIBS} AkMotionGeneratorSource AkMotionSink )
+	set( WIN_WWISE_LIBS ${WWISE_EXTRA_PLUGIN_LIBS} AkMotionGeneratorSource AkMotionSink ASIOSourceSink )
 	make_library(WIN_WWISE_LIBS "${WWISE_LIB_PATH}")
 	set( WIN_RELEASE_LIBS ${COMMON_WWISE_LIBS} ${WIN_WWISE_LIBS} ${WIN_LIBS} )
 	set( WIN_NONRELEASE_LIBS ${COMM_CENTRAL_LIBS} ${WIN_RELEASE_LIBS} "${WWISE_LIB_PATH}SFLib.lib" )
@@ -206,43 +214,35 @@ if (AUDIO_WWISE)
 	foreach(wwise_lib ${${WWISE_PLATFORM_PREFIX}_NONRELEASE_LIBS})
 		target_link_libraries( ${THIS_PROJECT} PRIVATE debug ${wwise_lib} )
 	endforeach()
+
+	target_compile_definitions(${THIS_PROJECT} PRIVATE $<$<NOT:$<CONFIG:Release>>:CRY_AUDIO_IMPL_WWISE_USE_DEBUG_CODE>)
+
+	if (DURANGO)
+		target_compile_definitions(${THIS_PROJECT} PRIVATE -DCRY_AUDIO_IMPL_WWISE_PROVIDE_SECONDARY_POOL)
+	endif()
 else()
 	CryFileContainer(CryAudioImplWwise SOLUTION_FOLDER "CryEngine/Audio/Implementations")
 endif()
 if (ORBIS OR CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
 	target_compile_options(${THIS_PROJECT} PRIVATE
-		-Wno-unknown-pragmas
-		-Wno-reorder
-		-Wno-parentheses
 		-Wno-format
-		-Wno-switch
-		-Wno-unused-value
-		-Wno-comment
-		-Wno-empty-body
-		-Wno-format-security
-		-Wno-unused-function
 		-Wno-multichar
+		-Wno-parentheses
+		-Wno-unknown-pragmas
+		-Wno-unused-function
 		-Wno-unused-private-field
 	)
 elseif(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
 	target_compile_options(${THIS_PROJECT} PRIVATE
-		-Wno-unused-function
-		-Wno-unused-value
-		-Wno-sign-compare
-		-Wno-ignored-attributes
-		-Wno-int-in-bool-context
-		-Wno-unused-but-set-variable
-		-Wno-misleading-indentation
-		-Wno-unknown-pragmas
-		-Wno-strict-aliasing
-		-Wno-maybe-uninitialized
-		-Wno-unused-const-variable
-		-Wno-multichar
-		-Wno-char-subscripts
-		-Wno-parentheses
-		-Wno-comment
-		-Wno-address
 		-Wno-format
-		-Wno-switch
+		-Wno-maybe-uninitialized
+		-Wno-misleading-indentation
+		-Wno-multichar
+		-Wno-parentheses
+		-Wno-sign-compare
+		-Wno-strict-aliasing
+		-Wno-unknown-pragmas
+		-Wno-unused-but-set-variable
+		-Wno-unused-function
 	)
 endif()

@@ -1126,11 +1126,10 @@ void CTriMesh::GetRandomPoints(Array<PosNorm> points, CRndGen& seed, EGeomForm e
 	}
 	else
 	{
-		CGeomExtent const& extent = m_Extents[eForm];
-		if (!extent.NumParts())
+		if (!m_Extents[eForm].NumParts())
 			return points.fill(ZERO);
 		for (auto& ran : points) {
-			int nPart = extent.RandomPart(seed);
+			int nPart = m_Extents[eForm].RandomPart(seed);
 
 			int aIndices[3];
 			PosNorm aRan[3];
@@ -4949,6 +4948,7 @@ int CTriMesh::Proxify(IGeometry **&pOutGeoms, SProxifyParams *pparams)
 			if (nvtx && nTris) {
 				CTriMesh *pMesh = new CTriMesh();
 				pGeoms[nGeoms++] = pMesh->CreateTriMesh(vtx,&pOutTris[0].x,(char*)pOutTris,0,nTris,(nTris<11 ? mesh_SingleBB : mesh_AABB|mesh_AABB_rotated|mesh_OBB)|mesh_multicontact1);
+				memset(pMesh->m_pIds,0,nTris);
 				if (nGeoms>=params.maxGeoms)
 					break;
 			}
@@ -4960,6 +4960,14 @@ int CTriMesh::Proxify(IGeometry **&pOutGeoms, SProxifyParams *pparams)
 			(*(m_voxgrid=new voxgrid_tpl<false>)=vox).persistent = true;
 		}	else if (!params.reuseVox)
 			vox.Free();
+
+		if (!(params.findMeshes | params.findPrimLines | params.findPrimSurfaces)) {
+			CTriMesh *pMesh = new CTriMesh();
+			pGeoms[nGeoms++] = pMesh->CreateTriMesh(m_pVertices,pTris,(char*)pTris,0,nTris,(nTris<11 ? mesh_SingleBB : mesh_AABB|mesh_AABB_rotated|mesh_OBB)|mesh_multicontact1);
+			memset(pMesh->m_pIds,0,nTris);
+			if (nGeoms>=params.maxGeoms)
+					break;
+		}
 	}
 
 	if (pTris!=m_pIndices) delete[] pTris;

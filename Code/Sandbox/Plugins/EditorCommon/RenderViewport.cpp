@@ -261,6 +261,12 @@ void CRenderViewport::ProcessMouse()
 	{
 		if (gEnv->pHardwareMouse && m_lastMousePos != point)
 		{
+			// Ensure, viewport is set correctly, even after switching widgets while in game mode
+			if (GetIEditor()->GetViewportManager()->GetSelectedViewport() != this)
+			{
+				GetIEditor()->GetViewportManager()->SelectViewport(this);
+			}
+
 			gEnv->pHardwareMouse->Event(point.x, point.y, HARDWAREMOUSEEVENT_MOVE);
 		}
 		m_lastMousePos = point;
@@ -344,12 +350,7 @@ void CRenderViewport::ProcessMouse()
 
 		ypr.y = CLAMP(ypr.y, -1.5f, 1.5f);    // to keep rotation in reasonable range
 		// In the recording mode of a custom camera, the z rotation is allowed.
-
-		//		bool bExclusiveMode = GetIEditor()->GetLevelEditorSharedState()->GetEditTool() && GetIEditor()->GetLevelEditorSharedState()->GetEditTool()->IsExclusiveMode();
-		//		if( GetCameraObject() == NULL || (!GetIEditor()->GetAnimation()->IsRecordMode() && !bExclusiveMode) )
-		{
-			ypr.z = 0;    // to have camera always upward
-		}
+		ypr.z = 0;    // to have camera always upward
 
 		camtm = Matrix34(CCamera::CreateOrientationYPR(ypr), camtm.GetTranslation());
 		SetViewTM(camtm);
@@ -702,7 +703,7 @@ void CRenderViewport::RenderSelectionRectangle(SDisplayContext& context)
 	CPoint bottomRight(m_selectedRect.right, m_selectedRect.bottom);
 
 	context.SetColor(1, 1, 1, 0.4f);
-	context.DrawWireQuad2d(topLeft, bottomRight, 1);
+	context.DrawWireQuad2d(topLeft, bottomRight, 1, true, false);
 }
 
 SDisplayContext CRenderViewport::InitDisplayContext(const SDisplayContextKey& displayContextKey)
@@ -1096,8 +1097,7 @@ void CRenderViewport::SetViewTM(const Matrix34& viewTM, bool bMoveOnly)
 			return;
 		}
 
-		const bool bExclusiveMode = GetIEditor()->GetLevelEditorSharedState()->GetEditTool() && GetIEditor()->GetLevelEditorSharedState()->GetEditTool()->IsExclusiveMode();
-		const bool bPushUndo = !bExclusiveMode && (m_eCameraMoveState == ECameraMoveState::MovingWithoutUndoPushed);
+		const bool bPushUndo = m_eCameraMoveState == ECameraMoveState::MovingWithoutUndoPushed;
 		if (bPushUndo)
 		{
 			GetIEditor()->GetIUndoManager()->Begin();
@@ -1298,8 +1298,6 @@ void CRenderViewport::ProcessKeys()
 	Vec3 xdir = m.GetColumn0().GetNormalized();
 
 	Vec3 pos = GetViewTM().GetTranslation();
-
-	IConsole* console = GetIEditor()->GetSystem()->GetIConsole();
 
 	float speedScale = 60.0f * GetIEditor()->GetSystem()->GetITimer()->GetFrameTime();
 	if (speedScale > 20) speedScale = 20;

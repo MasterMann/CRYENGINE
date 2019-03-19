@@ -279,7 +279,7 @@ void CD3D9Renderer::SetRendererCVar(ICVar* pCVar, const char* pArgText, const bo
 	ExecuteRenderThreadCommand(
 		[=]
 		{
-			pCVar->Set(argText.c_str());
+			pCVar->SetFromString(argText.c_str());
 
 			if (!bSilentMode)
 			{
@@ -309,9 +309,7 @@ void CD3D9Renderer::StartLoadtimeFlashPlayback(ILoadtimeCallback* pCallback)
 	{
 		FlushRTCommands(true, true, true);
 
-		CRenderDisplayContext* pDC = GetActiveDisplayContext();
 		m_pRT->m_pLoadtimeCallback = pCallback;
-		//SetViewport(0, 0, pDC->m_Width, pDC->m_Height);
 		m_pRT->RC_StartVideoThread();
 
 		// wait until render thread has fully processed the start of the video

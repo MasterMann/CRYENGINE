@@ -1,14 +1,6 @@
 // Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
-/*=============================================================================
-
-   Revision history:
-* Created by Vladimir Kajalin
-
-   =============================================================================*/
-
-#ifndef __D3D_SVO__H__
-#define __D3D_SVO__H__
+#pragma once
 
 #if defined(FEATURE_SVO_GI)
 
@@ -71,6 +63,7 @@ public:
 	int                  GetIntegratioMode(bool& bSpecTracingInUse) const;
 	bool                 GetUseLightProbes() const { return e_svoTI_SkyColorMultiplier >= 0; }
 	void                 DebugDrawStats(const RPProfilerStats* pBasicStats, float& ypos, const float ystep, float xposms);
+	size_t               GetAllocatedMemory();
 
 	static bool          SetShaderParameters(float*& pSrc, uint32 paramType, UFloat4* sData);
 	static CTexture*     GetRsmColorMap(const ShadowMapFrustum& rFr, bool bCheckUpdate = false);
@@ -129,7 +122,7 @@ protected:
 	void                   VoxelizeRE();
 	bool                   VoxelizeMeshes(CShader* ef, SShaderPass* sfm);
 
-	CRenderView*           RenderView() const { return m_pRenderView; };
+	CRenderView*           RenderView() const { return m_pRenderView; }
 
 	#ifdef FEATURE_SVO_GI_ALLOW_HQ
 	_smart_ptr<CTexture> m_pRT_NID_0;
@@ -292,5 +285,4 @@ protected:
 	#undef INIT_SVO_CVAR
 };
 
-#endif
-#endif
+#endif // FEATURE_SVO_GI

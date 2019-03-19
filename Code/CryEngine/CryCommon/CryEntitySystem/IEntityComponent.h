@@ -488,10 +488,10 @@ public:
 	//! The timer will automatically be serialized to disk and restored for save games, assuming that a component with the same instance GUID exists at deserialization time.
 	//! \param timerId Timer ID, multiple timers with different IDs are possible.
 	//! \param timeInMilliseconds Timer timeout time in milliseconds.
-	void SetTimer(uint8 timerId, int timeInMilliseconds);
+	void SetTimer(uint32 timerId, int timeInMilliseconds);
 	//! Stops the specified timer for this component instance
 	//! \see ENTITY_EVENT_TIMER
-	void KillTimer(uint8 timerId);
+	void KillTimer(uint32 timerId);
 	//! Stops all timers for this component instance
 	//! \see ENTITY_EVENT_TIMER
 	void KillAllTimers();
@@ -705,8 +705,6 @@ struct IEntityAudioComponent : public IEntityComponent
 	virtual bool                  RemoveAudioAuxObject(CryAudio::AuxObjectId const audioAuxObjectId) = 0;
 	virtual void                  SetAudioAuxObjectOffset(Matrix34 const& offset, CryAudio::AuxObjectId const audioAuxObjectId = CryAudio::DefaultAuxObjectId) = 0;
 	virtual Matrix34 const&       GetAudioAuxObjectOffset(CryAudio::AuxObjectId const audioAuxObjectId = CryAudio::DefaultAuxObjectId) = 0;
-	virtual bool                  PlayFile(CryAudio::SPlayFileInfo const& playbackInfo, CryAudio::AuxObjectId const audioAuxObjectId = CryAudio::DefaultAuxObjectId, CryAudio::SRequestUserData const& userData = CryAudio::SRequestUserData::GetEmptyObject()) = 0;
-	virtual void                  StopFile(char const* const szFile, CryAudio::AuxObjectId const audioAuxObjectId = CryAudio::DefaultAuxObjectId) = 0;
 	//! Executes the specified trigger on the entity
 	//! \param audioTriggerId The trigger we want to execute
 	//! \param audioAuxObjectId Audio object within the component that we want to set, see IEntityAudioComponent::CreateAudioAuxObject. If not provided it is played on the default object.
@@ -726,17 +724,16 @@ struct IEntityAudioComponent : public IEntityComponent
 	//! \param audioAuxObjectId Audio object within the component that we want to set, see IEntityAudioComponent::CreateAudioAuxObject. If not provided it is played on the default object.
 	//! \par Example
 	//! \include CryEntitySystem/Examples/Audio/SetParameterValue.cpp
-	virtual void                  SetParameter(CryAudio::ControlId const parameterId, float const value, CryAudio::AuxObjectId const audioAuxObjectId = CryAudio::DefaultAuxObjectId) = 0;
-	virtual void                  SetObstructionCalcType(CryAudio::EOcclusionType const occlusionType, CryAudio::AuxObjectId const audioAuxObjectId = CryAudio::DefaultAuxObjectId) = 0;
-	virtual void                  SetOcclusionRayOffset(float const offset, CryAudio::AuxObjectId const audioAuxObjectId = CryAudio::DefaultAuxObjectId) = 0;
-	virtual void                  SetEnvironmentAmount(CryAudio::EnvironmentId const audioEnvironmentId, float const amount, CryAudio::AuxObjectId const audioAuxObjectId = CryAudio::DefaultAuxObjectId) = 0;
-	virtual void                  SetCurrentEnvironments(CryAudio::AuxObjectId const audioAuxObjectId = CryAudio::DefaultAuxObjectId) = 0;
-	virtual void                  AudioAuxObjectsMoveWithEntity(bool const bCanMoveWithEntity) = 0;
-	virtual void                  AddAsListenerToAudioAuxObject(CryAudio::AuxObjectId const audioAuxObjectId, void (*func)(CryAudio::SRequestInfo const* const), CryAudio::ESystemEvents const eventMask) = 0;
-	virtual void                  RemoveAsListenerFromAudioAuxObject(CryAudio::AuxObjectId const audioAuxObjectId, void (*func)(CryAudio::SRequestInfo const* const)) = 0;
-	virtual CryAudio::AuxObjectId GetAuxObjectIdFromAudioObject(CryAudio::IObject* pObject) = 0;
-	virtual void                  ToggleAbsoluteVelocityTracking(bool const enable, CryAudio::AuxObjectId const audioAuxObjectId = CryAudio::DefaultAuxObjectId, CryAudio::SRequestUserData const& userData = CryAudio::SRequestUserData::GetEmptyObject()) = 0;
-	virtual void                  ToggleRelativeVelocityTracking(bool const enable, CryAudio::AuxObjectId const audioAuxObjectId = CryAudio::DefaultAuxObjectId, CryAudio::SRequestUserData const& userData = CryAudio::SRequestUserData::GetEmptyObject()) = 0;
+	virtual void SetParameter(CryAudio::ControlId const parameterId, float const value, CryAudio::AuxObjectId const audioAuxObjectId = CryAudio::DefaultAuxObjectId) = 0;
+	virtual void SetObstructionCalcType(CryAudio::EOcclusionType const occlusionType, CryAudio::AuxObjectId const audioAuxObjectId = CryAudio::DefaultAuxObjectId) = 0;
+	virtual void SetOcclusionRayOffset(float const offset, CryAudio::AuxObjectId const audioAuxObjectId = CryAudio::DefaultAuxObjectId) = 0;
+	virtual void SetEnvironmentAmount(CryAudio::EnvironmentId const audioEnvironmentId, float const amount, CryAudio::AuxObjectId const audioAuxObjectId = CryAudio::DefaultAuxObjectId) = 0;
+	virtual void SetCurrentEnvironments(CryAudio::AuxObjectId const audioAuxObjectId = CryAudio::DefaultAuxObjectId) = 0;
+	virtual void AudioAuxObjectsMoveWithEntity(bool const bCanMoveWithEntity) = 0;
+	virtual void AddAsListenerToAudioAuxObject(CryAudio::AuxObjectId const audioAuxObjectId, void (*func)(CryAudio::SRequestInfo const* const), CryAudio::ESystemEvents const eventMask) = 0;
+	virtual void RemoveAsListenerFromAudioAuxObject(CryAudio::AuxObjectId const audioAuxObjectId, void (*func)(CryAudio::SRequestInfo const* const)) = 0;
+	virtual void ToggleAbsoluteVelocityTracking(bool const enable, CryAudio::AuxObjectId const audioAuxObjectId = CryAudio::DefaultAuxObjectId, CryAudio::SRequestUserData const& userData = CryAudio::SRequestUserData::GetEmptyObject()) = 0;
+	virtual void ToggleRelativeVelocityTracking(bool const enable, CryAudio::AuxObjectId const audioAuxObjectId = CryAudio::DefaultAuxObjectId, CryAudio::SRequestUserData const& userData = CryAudio::SRequestUserData::GetEmptyObject()) = 0;
 };
 
 //! Type of an area managed by IEntityAreaComponent.

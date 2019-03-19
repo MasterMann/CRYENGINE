@@ -110,11 +110,6 @@ enum class EPlatform
 	#define NDEBUG
 #endif
 
-#if CRY_PLATFORM_DURANGO && defined(_RELEASE) && !defined(_LIB) && !defined(CRY_IS_SCALEFORM_HELPER)
-// Build static library when compiling release on Durango
-	#error _LIB is expected to be set for release Durango
-#endif
-
 #if CRY_PLATFORM_ORBIS && !defined(_LIB) && !defined(CRY_IS_SCALEFORM_HELPER)
 	#error _LIB is expected to be set for Orbis
 #endif
@@ -408,18 +403,6 @@ void            CryGetExecutableFolder(unsigned int pathSize, char* szOutPath);
 void            CryFindEngineRootFolder(unsigned int pathSize, char* szOutPath);
 void            CrySetCurrentWorkingDirectory(const char* szWorkingDirectory);
 void            CryFindRootFolderAndSetAsCurrentWorkingDirectory();
-
-inline void     CryHeapCheck()
-{
-#if CRY_PLATFORM_WINDOWS // todo: this might be read with later xdks?
-	int Result = _heapchk();
-	assert(Result != _HEAPBADBEGIN);
-	assert(Result != _HEAPBADNODE);
-	assert(Result != _HEAPBADPTR);
-	assert(Result != _HEAPEMPTY);
-	assert(Result == _HEAPOK);
-#endif
-}
 
 //! Useful function to clean a structure.
 template<class T>

@@ -285,7 +285,7 @@ bool CTerrainNode::CheckVis(bool bAllInside, bool bAllowRenderIntoCBuffer, const
 	}
 	else
 	{
-		if (Get3DEngine()->IsStatObjBufferRenderTasksAllowed() && passInfo.IsGeneralPass() && JobManager::InvokeAsJob("CheckOcclusion"))
+		if (Get3DEngine()->IsStatObjBufferRenderTasksAllowed() && passInfo.IsGeneralPass())
 		{
 			GetObjManager()->PushIntoCullQueue(SCheckOcclusionJobData::CreateTerrainJobData(this, boxWS, distance, passCullMask));
 		}
@@ -1422,11 +1422,6 @@ void CTerrainNode::OffsetPosition(const Vec3& delta)
 	if (m_pChilds)
 		for (int i = 0; i < 4; ++i)
 			m_pChilds[i].OffsetPosition(delta);
-}
-
-void CTerrainNode::FillBBox(AABB& aabb)
-{
-	aabb = GetBBox();
 }
 
 void CTerrainNode::SetTraversalFrameId(uint32 onePassTraversalFrameId, int shadowFrustumLod)

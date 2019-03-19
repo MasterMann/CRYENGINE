@@ -14,31 +14,25 @@
 #include <CryRenderer/RenderObject.h>
 //Do not add any headers here!
 
-struct ISystem;
-struct ICharacterInstance;
-struct CVars;
-struct pe_params_particle;
-struct IMaterial;
-struct RenderLMData;
-struct AnimTexInfo;
-struct ISplineInterpolator;
 class CContentCGF;
-struct SpawnParams;
-class ICrySizer;
-struct SRenderNodeTempData;
-struct IParticleManager;
-class IOpticsManager;
-struct IDeferredPhysicsEventManager;
-struct IBSPTree3D;
-struct ITimeOfDay;
-struct IBreezeGenerator;
-struct IRenderView;
 class CRenderView;
-struct ISurfaceType;
-struct CryEngineDecalInfo;
-struct IShadowCaster;
-struct IGeometry;
+class ICrySizer;
+class IOpticsManager;
+
 struct bop_meshupdate;
+struct CryEngineDecalInfo;
+struct IBreezeGenerator;
+struct IBSPTree3D;
+struct ICharacterInstance;
+struct IColorGradingCtrl;
+struct IDeferredPhysicsEventManager;
+struct IGeometry;
+struct IParticleManager;
+struct IRenderView;
+struct IShadowCaster;
+struct ISurfaceType;
+struct ITimeOfDay;
+
 enum EERType;
 
 namespace ChunkFile
@@ -137,6 +131,8 @@ enum E3DEngineParameter
 
 	E3DPARAM_SKY_SKYBOX_ANGLE,
 	E3DPARAM_SKY_SKYBOX_STRETCHING,
+	E3DPARAM_SKY_SKYBOX_EXPOSURE,
+	E3DPARAM_SKY_SKYBOX_OPACITY,
 
 	EPARAM_SUN_SHAFTS_VISIBILITY,
 
@@ -459,7 +455,7 @@ struct IVisArea : public IClipVolume
 	//! \param nMaxConnNum          - The maximum of IVisArea to write in pAreas
 	//! \param bSkipDisabledPortals - Ignore portals which are disabled
 	//! \return An integer which hold the amount of VisArea found to be connected.
-	virtual int GetVisAreaConnections(IVisArea** pAreas, int nMaxConnNum, bool bSkipDisabledPortals = false) = 0;
+	virtual int GetVisAreaConnections(IVisArea** pAreas, int nMaxConnNum, bool bSkipDisabledPortals = false) const = 0;
 
 	//! Determines if it's connected to an outdoor area.
 	//! \return True if the VisArea is connected to an outdoor area.
@@ -502,13 +498,13 @@ struct IVisArea : public IClipVolume
 	//! \return true if the VisArea if it's affected by outdoor lighting, else false will be returned.
 	virtual bool IsAffectedByOutLights() const = 0;
 
-	//! Determines if the spere can be affect the VisArea.
+	//! Determines if the sphere can be affect the VisArea.
 	//! \return Returns true if the VisArea can be affected by the sphere, else false will be returned.
-	virtual bool IsSphereInsideVisArea(const Vec3& vPos, const f32 fRadius) = 0;
+	virtual bool IsSphereInsideVisArea(const Vec3& vPos, const f32 fRadius) const = 0;
 
 	//! Clips geometry inside or outside a vis area.
 	//! \return true if geom was clipped.
-	virtual bool ClipToVisArea(bool bInside, Sphere& sphere, Vec3 const& vNormal) = 0;
+	virtual bool ClipToVisArea(bool bInside, Sphere& sphere, Vec3 const& vNormal) const = 0;
 
 	//! Gives back the axis aligned bounding box of VisArea.
 	//! \return the pointer of an AABB.
@@ -524,7 +520,7 @@ struct IVisArea : public IClipVolume
 	virtual bool IsPointInsideVisArea(const Vec3& vPos) const = 0;
 
 	//! \return vis area final ambient color (ambient color depends on factors, like if connected to outdoor, is affected by skycolor - etc)
-	virtual const Vec3 GetFinalAmbientColor() = 0;
+	virtual const Vec3 GetFinalAmbientColor() const = 0;
 
 	virtual void       GetShapePoints(const Vec3*& pPoints, size_t& nPoints) = 0;
 	virtual float      GetHeight() = 0;
@@ -880,6 +876,7 @@ struct IVisAreaCallback
 
 struct IVisAreaTestCallback
 {
+	virtual ~IVisAreaTestCallback() {}
 	virtual bool TestVisArea(IVisArea* pVisArea) const = 0;
 };
 
@@ -1036,6 +1033,16 @@ struct IFoliage
 	// </interfuscator:shuffle>
 };
 
+//////////////////////////////////////////////////////////////////////
+//! Sky rendering
+enum eSkyType // Maps to "e_SkyType" CVar
+{
+	eSkyType_Sky = 0,
+	eSkyType_HDRSky = 1,
+
+	eSkyType_NumSkyTypes,
+};
+
 struct SSkyLightRenderParams
 {
 	static constexpr int skyDomeTextureWidth = 64;
@@ -1047,8 +1054,7 @@ struct SSkyLightRenderParams
 	static constexpr int skyDomeTextureHeightBy2Log = 4;  //!< = log2(32/2).
 
 	SSkyLightRenderParams()
-		: m_pSkyDomeMesh(0)
-		, m_pSkyDomeTextureDataMie(0)
+		: m_pSkyDomeTextureDataMie(0)
 		, m_pSkyDomeTextureDataRayleigh(0)
 		, m_skyDomeTexturePitch(0)
 		, m_skyDomeTextureTimeStamp(-1)
@@ -1066,9 +1072,6 @@ struct SSkyLightRenderParams
 		, m_skyColorWest(0.0f, 0.0f, 0.0f)
 	{
 	}
-
-	//! Sky dome mesh.
-	_smart_ptr<IRenderMesh> m_pSkyDomeMesh;
 
 	// temporarily add padding bytes to prevent fetching Vec4 constants below from wrong offset
 	uint32 dummy0;
@@ -1422,7 +1425,7 @@ struct I3DEngine : public IProcess
 	virtual void GetObjectsStreamingStatus(SObjectsStreamingStatus& outStatus) = 0;
 
 	//! Gets stats on the streaming bandwidth requests from subsystems.
-	//! \param subsystem Rhe streaming subsystem for which we want bandwidth data.
+	//! \param subsystem The streaming subsystem for which we want bandwidth data.
 	//! \param outData Structure containing the bandwidth data for the subsystem requested.
 	virtual void GetStreamingSubsystemData(int subsystem, SStremaingBandwidthData& outData) = 0;
 
@@ -1524,7 +1527,7 @@ struct I3DEngine : public IProcess
 	virtual Vec4 GetCausticsParams() const = 0;
 
 	//! Gets ocean animation caustics parameters.
-	//! \return A Vec4 value which constains: x = unused, y = height, z = depth, w = intensity
+	//! \return A Vec4 value which contains: x = unused, y = height, z = depth, w = intensity
 	virtual Vec4 GetOceanAnimationCausticsParams() const = 0;
 
 	//! Gets ocean animation parameters.
@@ -1722,11 +1725,11 @@ struct I3DEngine : public IProcess
 	virtual bool GetStatInstGroup(int nGroupId, IStatInstGroup& siGroup) = 0;
 
 	// Summary:
-	//		Sets burbed out flag
+	//		Sets burned out flag
 	virtual void SetTerrainBurnedOut(int x, int y, bool bBurnedOut) = 0;
 
 	// Summary:
-	//		Gets burbed out flag
+	//		Gets burned out flag
 	virtual bool IsTerrainBurnedOut(int x, int y) = 0;
 
 	//! Notifies of an explosion, and maybe creates an hole in the terrain.
@@ -1920,13 +1923,13 @@ struct I3DEngine : public IProcess
 
 	//! Gets the VisArea which is present at a specified point.
 	//! \return VisArea containing point, if any, 0 otherwise.
-	virtual IVisArea* GetVisAreaFromPos(const Vec3& vPos) = 0;
+	virtual IVisArea* GetVisAreaFromPos(const Vec3& vPos) const = 0;
 
 	//! Tests for intersection against Vis Areas.
 	//! \param[in] box Volume to test for intersection.
 	//! \param[out] pNodeCache Optional, set to a cached pointer for quicker calls to ClipToVisAreas.
 	//! \return Whether box intersects any vis areas.
-	virtual bool IntersectsVisAreas(const AABB& box, void** pNodeCache = 0) = 0;
+	virtual bool IntersectsVisAreas(const AABB& box, void** pNodeCache = 0) const = 0;
 
 	//! Clips geometry against the boundaries of VisAreas.
 	//! \param pInside: Vis Area to clip inside of. If 0, clip outside all Vis Areas.
@@ -2088,11 +2091,23 @@ struct I3DEngine : public IProcess
 	//! \return TOD interface.
 	virtual ITimeOfDay* GetTimeOfDay() = 0;
 
-	//! \return SkyBox material.
-	virtual IMaterial* GetSkyMaterial() = 0;
+	virtual IColorGradingCtrl* GetColorGradingCtrl() = 0;
 
-	//! Sets SkyBox Material.
-	virtual void SetSkyMaterial(IMaterial* pSkyMat) = 0;
+	//////////////////////////////////////////////////////////////////////////
+	// Sky
+	virtual bool IsSkyVisible() = 0;
+	virtual eSkyType GetSkyType() const = 0;
+
+	virtual const SSkyLightRenderParams* GetSkyLightRenderParams() const = 0;
+	
+	virtual string GetSkyDomeTextureName() const = 0;
+	virtual void   SetSkyDomeTextureName(string name) = 0;
+
+	virtual string GetMoonTextureName() const = 0;
+	virtual void   SetMoonTextureName(string name) = 0;
+
+	//! Updates sky parameters from specified material
+	virtual void SetSkyMaterial(IMaterial* pSkyMat, eSkyType type) = 0;
 
 	//! Sets global 3d engine parameter.
 	virtual void SetGlobalParameter(E3DEngineParameter param, const Vec3& v) = 0;
@@ -2158,7 +2173,7 @@ struct I3DEngine : public IProcess
 
 	virtual const char* GetVoxelEditOperationName(EVoxelEditOperation eOperation) = 0;
 
-	//! Gives 3dengine access to original and most precise heighmap data in the editor
+	//! Gives 3dengine access to original and most precise heightmap data in the editor
 	virtual void                     SetEditorHeightmapCallback(IEditorHeightmap* pCallBack) = 0;
 
 	virtual PodArray<SRenderLight*>* GetDynamicLightSources() = 0;

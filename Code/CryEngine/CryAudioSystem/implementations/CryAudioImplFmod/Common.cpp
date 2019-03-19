@@ -9,10 +9,21 @@ namespace Impl
 {
 namespace Fmod
 {
+FMOD::System* g_pLowLevelSystem = nullptr;
+FMOD::Studio::System* g_pSystem = nullptr;
+
+CImpl* g_pImpl = nullptr;
 CGlobalObject* g_pObject = nullptr;
 CListener* g_pListener = nullptr;
 uint32 g_numObjectsWithDoppler = 0;
-TriggerToParameterIndexes g_triggerToParameterIndexes;
-} // namespace Fmod
-} // namespace Impl
-} // namespace CryAudio
+Objects g_constructedObjects;
+EventToParameterIndexes g_eventToParameterIndexes;
+SnapshotEventInstances g_activeSnapshots;
+
+#if defined(CRY_AUDIO_IMPL_FMOD_USE_DEBUG_CODE)
+ActiveSnapshots g_activeSnapshotNames;
+VcaValues g_vcaValues;
+#endif // CRY_AUDIO_IMPL_FMOD_USE_DEBUG_CODE
+}      // namespace Fmod
+}      // namespace Impl
+}      // namespace CryAudio

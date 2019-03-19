@@ -2,7 +2,7 @@
 
 #pragma once
 
-#include "Common/SharedData.h"
+#include "Common.h"
 
 class XmlNodeRef;
 
@@ -22,21 +22,21 @@ public:
 
 	CFileLoader() = default;
 
-	FileNames  GetLoadedFilenamesList() const { return m_loadedFilenames; }
-	void       CreateInternalControls();
-	void       LoadAll();
-	void       LoadScopes();
-	EErrorCode GetErrorCodeMask() const { return m_errorCodeMask; }
+	FileNames GetLoadedFilenamesList() const { return m_loadedFilenames; }
+	void      CreateInternalControls();
+	void      Load();
 
 private:
 
-	void      LoadControls();
-	void      LoadAllLibrariesInFolder(string const& folderPath, string const& level);
-	void      LoadControlsLibrary(XmlNodeRef const pRoot, string const& filepath, string const& level, string const& filename, uint32 const version);
-	CControl* LoadControl(XmlNodeRef const pNode, Scope const scope, uint32 const version, CAsset* const pParentItem);
-	void      LoadPlatformSpecificConnections(XmlNodeRef const pNode, CControl* const pControl, uint32 const version);
+	bool      LoadAllLibrariesInFolder(string const& folderPath, string const& contextName);
+	void      LoadControlsLibrary(XmlNodeRef const pRoot, string const& filepath, string const& contextName, string const& fileName, uint8 const version);
+	CControl* LoadControl(XmlNodeRef const pNode, CryAudio::ContextId const contextId, CAsset* const pParentItem);
 
-	FileNames  m_loadedFilenames;
-	EErrorCode m_errorCodeMask = EErrorCode::None;
+#if defined (USE_BACKWARDS_COMPATIBILITY)
+	void LoadControlsBW();
+	bool LoadAllLibrariesInFolderBW(string const& folderPath, string const& level);
+#endif //  USE_BACKWARDS_COMPATIBILITY
+
+	FileNames m_loadedFilenames;
 };
 } // namespace ACE

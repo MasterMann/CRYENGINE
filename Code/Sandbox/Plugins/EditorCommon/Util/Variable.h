@@ -133,8 +133,9 @@ struct EDITOR_COMMON_API IVariable : public IVariableContainer
 		DT_FLARE,
 		DT_AUDIO_TRIGGER,
 		DT_AUDIO_SWITCH,
+		DT_AUDIO_STATE,
 		DT_AUDIO_SWITCH_STATE,
-		DT_AUDIO_RTPC,
+		DT_AUDIO_PARAMETER,
 		DT_AUDIO_ENVIRONMENT,
 		DT_AUDIO_PRELOAD_REQUEST,
 		DT_AUDIO_SETTING,
@@ -797,10 +798,10 @@ template<> struct type_traits<string> : public type_traits_base<IVariable::STRIN
 struct type_convertor
 {
 	template<class From, class To>
-	typename std::enable_if<(!std::is_same<From, CString>::value&& !std::is_same<To, CString>::value), void>::type operator()(const From& from, To& to) const { assert(0); }
+	typename std::enable_if<(!std::is_same<From, CString>::value && !std::is_same<To, CString>::value), void>::type operator()(const From& from, To& to) const { assert(0); }
 
 	template<class From, class To>
-	typename std::enable_if<(std::is_same<From, CString>::value&& std::is_same<To, CString>::value), void>::type operator()(const From& from, To& to) const { to = from; }
+	typename std::enable_if<(std::is_same<From, CString>::value && std::is_same<To, CString>::value), void>::type operator()(const From& from, To& to) const { to = from; }
 
 	template<class From>
 	typename std::enable_if<(!std::is_same<From, CString>::value), void>::type operator()(const From& from, CString& to) const
@@ -922,7 +923,7 @@ inline void init(Type& val)
 }
 inline void init(Vec2& val) { val.x = 0; val.y = 0; }
 inline void init(Vec3& val) { val.x = 0; val.y = 0; val.z = 0; }
-inline void init(Vec4& val) { val.x = 0; val.y = 0; val.z = 0; val.w = 0;  }
+inline void init(Vec4& val) { val.x = 0; val.y = 0; val.z = 0; val.w = 0; }
 inline void init(Ang3& val) { val.x = 0; val.y = 0; val.z = 0; }
 inline void init(Quat& val)
 {
@@ -1433,10 +1434,10 @@ struct CSmartVariableBase
 	bool operator!=(IVariable* pV) { return pVar != pV; }
 
 	operator VarType&() { VarType* pV = pVar; return *pV; }  // Cast to CVariableBase&
-	VarType& operator*() const      { return *pVar; }
-	VarType* operator->(void) const { return pVar; }
+	VarType& operator*() const  { return *pVar; }
+	VarType* operator->() const { return pVar; }
 
-	VarType* GetVar() const         { return pVar; }
+	VarType* GetVar() const     { return pVar; }
 
 protected:
 	_smart_ptr<VarType> pVar;
@@ -1485,10 +1486,10 @@ struct CSmartVariableArray
 	//////////////////////////////////////////////////////////////////////////
 	operator VarType&() { VarType* pV = pVar; return *pV; }
 
-	VarType& operator*() const      { return *pVar; }
-	VarType* operator->(void) const { return pVar; }
+	VarType& operator*() const  { return *pVar; }
+	VarType* operator->() const { return pVar; }
 
-	VarType* GetVar() const         { return pVar; }
+	VarType* GetVar() const     { return pVar; }
 
 private:
 	_smart_ptr<VarType> pVar;

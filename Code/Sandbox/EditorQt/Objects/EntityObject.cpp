@@ -63,6 +63,9 @@
 #include <CrySchematyc/CoreAPI.h>
 #include <IGameObjectSystem.h>
 
+#include <QPushButton>
+#include <QToolButton>
+
 REGISTER_CLASS_DESC(CEntityClassDesc);
 
 const char* CEntityObject::s_LensFlarePropertyName("flare_Flare");
@@ -2174,7 +2177,6 @@ void CEntityObject::XFormGameEntity()
 
 void CEntityObject::CalcBBox()
 {
-	bool bChanged = false;
 	if (m_pEntity != nullptr)
 	{
 		// Get Local bounding box of entity.
@@ -2880,7 +2882,7 @@ void CEntityObject::Serialize(CObjectArchive& ar)
 
 		xmlNode->getAttr("AttachmentTarget", m_attachmentTarget);
 
-		bool bLoaded = SetClass(entityClass, false, ar.node);
+		SetClass(entityClass, false, ar.node);
 
 		if (ar.bUndo)
 		{
@@ -5179,8 +5181,6 @@ void CEntityObject::ApplyOptics(const string& opticsFullName, IOpticsElementBase
 
 void CEntityObject::SetOpticsName(const string& opticsFullName)
 {
-	bool bUpdateOpticsProperty = true;
-
 	if (opticsFullName.IsEmpty())
 	{
 		SRenderLight* pLight = GetLightProperty();

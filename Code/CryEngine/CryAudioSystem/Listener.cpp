@@ -4,9 +4,12 @@
 #include "Listener.h"
 #include "Common.h"
 #include "System.h"
-#include "Object.h"
 #include "ListenerRequestData.h"
 #include "Common/IListener.h"
+
+#if defined(CRY_AUDIO_USE_DEBUG_CODE)
+	#include "GlobalObject.h"
+#endif // CRY_AUDIO_USE_DEBUG_CODE
 
 namespace CryAudio
 {
@@ -29,10 +32,10 @@ void CListener::HandleSetTransformation(CTransformation const& transformation)
 {
 	m_pImplData->SetTransformation(transformation);
 
-#if defined(INCLUDE_AUDIO_PRODUCTION_CODE)
+#if defined(CRY_AUDIO_USE_DEBUG_CODE)
 	m_transformation = transformation;
 	g_previewObject.HandleSetTransformation(transformation);
-#endif // INCLUDE_AUDIO_PRODUCTION_CODE
+#endif // CRY_AUDIO_USE_DEBUG_CODE
 }
 
 //////////////////////////////////////////////////////////////////////////
@@ -44,19 +47,19 @@ CTransformation const& CListener::GetTransformation() const
 //////////////////////////////////////////////////////////////////////////
 void CListener::SetName(char const* const szName, SRequestUserData const& userData /*= SRequestUserData::GetEmptyObject()*/)
 {
-#if defined(INCLUDE_AUDIO_PRODUCTION_CODE)
+#if defined(CRY_AUDIO_USE_DEBUG_CODE)
 	SListenerRequestData<EListenerRequestType::SetName> requestData(szName, this);
 	CRequest const request(&requestData, userData);
 	g_system.PushRequest(request);
-#endif // INCLUDE_AUDIO_PRODUCTION_CODE
+#endif // CRY_AUDIO_USE_DEBUG_CODE
 }
 
-#if defined(INCLUDE_AUDIO_PRODUCTION_CODE)
+#if defined(CRY_AUDIO_USE_DEBUG_CODE)
 //////////////////////////////////////////////////////////////////////////
 void CListener::HandleSetName(char const* const szName)
 {
 	m_name = szName;
 	m_pImplData->SetName(m_name);
 }
-#endif // INCLUDE_AUDIO_PRODUCTION_CODE
+#endif // CRY_AUDIO_USE_DEBUG_CODE
 }      // namespace CryAudio

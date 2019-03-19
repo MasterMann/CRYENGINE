@@ -426,7 +426,6 @@ void CMannequinDialog::ResavePreviewFile()
 
 bool CMannequinDialog::SavePreviewFile(const char* filename)
 {
-	IMannequin& mannequinSys = gEnv->pGameFramework->GetMannequinInterface();
 	const SControllerDef* pControllerDef = m_contexts.m_controllerDef;
 	if (pControllerDef == NULL)
 	{
@@ -1209,10 +1208,9 @@ void CMannequinDialog::OnRender()
 
 void CMannequinDialog::Update()
 {
-	m_wndFragmentBrowser->Update();
-
 	if (m_bPreviewFileLoaded)
 	{
+		m_wndFragmentBrowser->Update();
 		m_wndFragmentEditorPage.Update();
 		m_wndPreviewerPage.Update();
 		m_wndTransitionEditorPage.Update();

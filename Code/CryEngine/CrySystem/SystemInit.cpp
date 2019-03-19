@@ -261,6 +261,7 @@ static inline void InlineInitializationProcessing(const char* sDescription)
 //////////////////////////////////////////////////////////////////////////
 static void CmdCrashTest(IConsoleCmdArgs* pArgs)
 {
+	CRY_DISABLE_WARN_UNUSED_VARIABLES();
 	assert(pArgs);
 
 	if (pArgs->GetArgCount() == 2)
@@ -296,7 +297,7 @@ static void CmdCrashTest(IConsoleCmdArgs* pArgs)
 		case 3:
 			while (true)
 			{
-				char* element = new char[40960];
+				new char[40960];
 				// cppcheck-suppress memleak
 			}
 			break;
@@ -310,7 +311,7 @@ static void CmdCrashTest(IConsoleCmdArgs* pArgs)
 		case 5:
 			while (true)
 			{
-				char* element = new char[128];   //testing the crash handler an exception in the cry memory allocation occurred
+				new char[128];   //testing the crash handler an exception in the cry memory allocation occurred
 				// cppcheck-suppress memleak
 			}
 
@@ -364,6 +365,8 @@ static void CmdCrashTest(IConsoleCmdArgs* pArgs)
 	#pragma warning(pop)
 #endif // CRY_COMPILER_MSVC
 	}
+
+	CRY_RESTORE_WARN_UNUSED_VARIABLES();
 }
 
 //////////////////////////////////////////////////////////////////////////
@@ -453,16 +456,22 @@ static void CmdDumpCvars(IConsoleCmdArgs* pArgs)
 
 			std::sort(m_cvars.begin(), m_cvars.end(), [](const std::pair<const char*, const char*> & rA, const std::pair<const char*, const char*>& rB) -> bool { return strcmp(rA.first, rB.first) < 0; });
 
+#if !defined(_RELEASE) || defined(RELEASE_LOGGING)
 			for (const auto& cvar : m_cvars)
 			{
 				fprintf(pFile, "%s=%s\n", cvar.first,cvar.second);
 			}
+#endif
 
 			if (gEnv && gEnv->pCryPak)
 			{
 				char path[_MAX_PATH];
+#if !defined(EXCLUDE_NORMAL_LOG)
 				const char* szAdjustedPath = gEnv->pCryPak->AdjustFileName(file_path, path, 0);
 				CryLogAlways("\n=================\n CVars dumped to file: \"%s\" \n=================\n", szAdjustedPath);
+#else
+				gEnv->pCryPak->AdjustFileName(file_path, path, 0);
+#endif
 			}
 
 			fclose(pFile);
@@ -616,22 +625,27 @@ static void OnSysSpecChange(ICVar* pVar)
 	switch (spec)
 	{
 	case CONFIG_LOW_SPEC:
-		GetISystem()->LoadConfiguration("%engine%/config/LowSpec.cfg", &sysSpecOverrideSink, eLoadConfigSystemSpec);
+		GetISystem()->LoadConfiguration("config/LowSpec.cfg", &sysSpecOverrideSink, eLoadConfigSystemSpec);
 		break;
 	case CONFIG_MEDIUM_SPEC:
-		GetISystem()->LoadConfiguration("%engine%/config/MedSpec.cfg", &sysSpecOverrideSink, eLoadConfigSystemSpec);
+		GetISystem()->LoadConfiguration("config/MedSpec.cfg", &sysSpecOverrideSink, eLoadConfigSystemSpec);
 		break;
 	case CONFIG_HIGH_SPEC:
-		GetISystem()->LoadConfiguration("%engine%/config/HighSpec.cfg", &sysSpecOverrideSink, eLoadConfigSystemSpec);
+		GetISystem()->LoadConfiguration("config/HighSpec.cfg", &sysSpecOverrideSink, eLoadConfigSystemSpec);
 		break;
 	case CONFIG_VERYHIGH_SPEC:
-		GetISystem()->LoadConfiguration("%engine%/config/VeryHighSpec.cfg", &sysSpecOverrideSink, eLoadConfigSystemSpec);
+		GetISystem()->LoadConfiguration("config/VeryHighSpec.cfg", &sysSpecOverrideSink, eLoadConfigSystemSpec);
 		break;
 	case CONFIG_DURANGO:
-		GetISystem()->LoadConfiguration("%engine%/config/durango.cfg", pSysSpecOverrideSinkConsole, eLoadConfigSystemSpec);
+		GetISystem()->LoadConfiguration("config/durango.cfg", pSysSpecOverrideSinkConsole, eLoadConfigSystemSpec);
+		GetISystem()->LoadConfiguration("config/durango_non_x.cfg", pSysSpecOverrideSinkConsole, eLoadConfigSystemSpec);
+		break;
+	case CONFIG_DURANGO_X:
+		GetISystem()->LoadConfiguration("config/durango.cfg", pSysSpecOverrideSinkConsole, eLoadConfigSystemSpec);
+		GetISystem()->LoadConfiguration("config/durango_x.cfg", pSysSpecOverrideSinkConsole, eLoadConfigSystemSpec);
 		break;
 	case CONFIG_ORBIS:
-		GetISystem()->LoadConfiguration("%engine%/config/orbis.cfg", pSysSpecOverrideSinkConsole, eLoadConfigSystemSpec);
+		GetISystem()->LoadConfiguration("config/orbis.cfg", pSysSpecOverrideSinkConsole, eLoadConfigSystemSpec);
 		break;
 
 	default:
@@ -767,7 +781,9 @@ bool CSystem::UnloadDynamicLibrary(const char* szDllName)
 
 		CryLog("%s", msg.c_str());
 
+#if CRY_PLATFORM_WINDOWS || CRY_PLATFORM_DURANGO || CRY_PLATFORM_LINUX || CRY_PLATFORM_ANDROID || CRY_PLATFORM_APPLE
 		WIN_HMODULE hModule = moduleIt->second;
+#endif
 
 		// CVars should be unregistered earlier than owning objects/modules are destroyed.
 		auto CleanupModuleCVars = (void (*)())CryGetProcAddress(hModule, "CleanupModuleCVars");
@@ -895,8 +911,10 @@ bool CSystem::InitializeEngineModule(const SSystemInitParams& startupParams, con
 	{
 		GetIMemoryManager()->GetProcessMemInfo(memEnd);
 
+#if !defined(EXCLUDE_NORMAL_LOG)
 		uint64 memUsed = memEnd.WorkingSetSize - memStart.WorkingSetSize;
 		CryLog("Initializing %s done, MemUsage=%uKb", dllName, uint32(memUsed / 1024));
+#endif
 	}
 
 	return true;
@@ -1586,6 +1604,8 @@ bool CSystem::InitPhysicsRenderer(const SSystemInitParams& startupParams)
 		               "Culling distance for physics helpers rendering");
 		REGISTER_CVAR2("p_wireframe_distance", &m_pPhysRenderer->m_wireframeDist, m_pPhysRenderer->m_wireframeDist, 0,
 		               "Maximum distance at which wireframe is drawn on physics helpers");
+		REGISTER_CVAR2("p_meridian_distance", &m_pPhysRenderer->m_meridianDist, m_pPhysRenderer->m_meridianDist, 0,
+		               "Maximum distance at which meridians/parallels are drawn on physics helpers for primitives with round parts");
 		REGISTER_CVAR2("p_ray_fadeout", &m_pPhysRenderer->m_timeRayFadein, m_pPhysRenderer->m_timeRayFadein, 0,
 		               "Fade-out time for ray physics helpers");
 		REGISTER_CVAR2("p_ray_peak_time", &m_pPhysRenderer->m_rayPeakTime, m_pPhysRenderer->m_rayPeakTime, 0,
@@ -1768,7 +1788,8 @@ bool CSystem::InitFileSystem(const SSystemInitParams& startupParams)
 
 	// Legacy support for setting decryption key from IGameStartup interface
 	// Should be removed when legacy game dll's are gone
-	if (ICVar* pLegacyGameDllCVar = m_env.pConsole->GetCVar("sys_dll_game"))
+	ICVar* pLegacyGameDllCVar = m_env.pConsole->GetCVar("sys_dll_game");
+	if (pLegacyGameDllCVar != nullptr)
 	{
 		HMODULE hGameDll;
 
@@ -1876,12 +1897,15 @@ void CSystem::InitLog(const SSystemInitParams& startupParams)
 
 void CSystem::LoadPatchPaks()
 {
+#if CRY_PLATFORM_WINDOWS || CRY_PLATFORM_DURANGO
 	const char* pPatchPakMountPath = "";
 	uint32 nFlags = 0;
 	nFlags |= ICryPak::FLAGS_NEVER_IN_PAK;
 	nFlags |= ICryPak::FLAGS_PATH_REAL;
 	nFlags |= ICryArchive::FLAGS_OVERRIDE_PAK;
-	//For patching open the special patch pak with FLAGS_OVERRIDE_PAK so it beats all other paks
+#endif // #if CRY_PLATFORM_WINDOWS || CRY_PLATFORM_DURANGO
+
+	// For patching open the special patch pak with FLAGS_OVERRIDE_PAK so it beats all other paks
 
 #if CRY_PLATFORM_WINDOWS
 	m_env.pCryPak->OpenPack(pPatchPakMountPath, "patch/patch1.pak", nFlags);
@@ -2665,12 +2689,12 @@ bool CSystem::Initialize(SSystemInitParams& startupParams)
 	InlineInitializationProcessing("CSystem::Init PlatformOS");
 
 	{
+		m_FrameProfileSystem.Init();
+
 		//////////////////////////////////////////////////////////////////////////
 		// File system, must be very early
 		//////////////////////////////////////////////////////////////////////////
-		InitFileSystem(startupParams);
-
-		m_FrameProfileSystem.Init();
+		InitFileSystem(startupParams);		
 
 		//////////////////////////////////////////////////////////////////////////
 		InlineInitializationProcessing("CSystem::Init InitFileSystem");
@@ -2871,7 +2895,8 @@ bool CSystem::Initialize(SSystemInitParams& startupParams)
 		}
 
 #if CRY_PLATFORM_DURANGO
-		LoadConfiguration("durango.cfg", 0, eLoadConfigInit);
+		// OnSysSpecChange Triggers loading of durango.cfg
+		OnSysSpecChange(m_sys_spec); 
 #elif CRY_PLATFORM_ORBIS
 		LoadConfiguration("orbis.cfg", 0, eLoadConfigSystemSpec);
 #elif CRY_PLATFORM_MOBILE
@@ -4126,8 +4151,6 @@ public:
 		string trgFilename = PathUtil::Make(m_sPath, sFilePath);
 		int fsize = file.GetLength();
 
-		size_t len = file.GetLength();
-
 		if (fsize > (int)data.size())
 			data.resize(fsize + 16);
 
@@ -4828,11 +4851,6 @@ void CSystem::CreateSystemVars()
 	g_cvars.sys_splashscreen = nullptr;
 #endif
 
-	REGISTER_CVAR2("sys_deferAudioUpdateOptim", &g_cvars.sys_deferAudioUpdateOptim, 1, VF_NULL,
-	               "0 - disable optimisation\n"
-	               "1 - enable optimisation\n"
-	               "Default is 1");
-
 	REGISTER_CVAR2("sys_filesystemCaseSensitivity", &g_cvars.sys_filesystemCaseSensitivity, 0, VF_NULL, "0 = Ignore letter casing mismatches, 1 = Show warning on mismatch, 2 = Show error on mismatch");
 
 	m_sysNoUpdate = REGISTER_INT("sys_noupdate", 0, VF_CHEAT,
@@ -5190,10 +5208,13 @@ void CSystem::CreateSystemVars()
 	static const int default_sys_usePlatformSavingAPIDefault = 0;
 #else
 	static const int default_sys_usePlatformSavingAPI = 1;
+
+#ifndef _RELEASE
 	static const int default_sys_usePlatformSavingAPIDefault = 1;
 #endif
+#endif
 
-	REGISTER_CVAR2("sys_usePlatformSavingAPI", &g_cvars.sys_usePlatformSavingAPI, default_sys_usePlatformSavingAPI, VF_CHEAT, "Use the platform APIs for saving and loading (complies with TRCs, but allocates lots of memory)");
+	REGISTER_CVAR2("sys_usePlatformSavingAPI", &g_cvars.sys_usePlatformSavingAPI, default_sys_usePlatformSavingAPI, VF_REQUIRE_APP_RESTART, "Use the platform APIs for saving and loading (complies with TRCs, but allocates lots of memory)");
 #ifndef _RELEASE
 	REGISTER_CVAR2("sys_usePlatformSavingAPIEncryption", &g_cvars.sys_usePlatformSavingAPIEncryption, default_sys_usePlatformSavingAPIDefault, VF_CHEAT, "Use encryption cipher when using the platform APIs for saving and loading");
 #endif

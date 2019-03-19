@@ -2,7 +2,6 @@
 
 #include "stdafx.h"
 #include "Impl.h"
-#include "Common/IEvent.h"
 #include "Common/IListener.h"
 #include "Common/IObject.h"
 #include "Common/FileInfo.h"
@@ -13,11 +12,6 @@ namespace Impl
 {
 namespace Null
 {
-struct SEvent final : IEvent
-{
-	virtual ERequestStatus Stop() override { return ERequestStatus::Success; }
-};
-
 struct SListener final : IListener
 {
 	virtual void                   Update(float const deltaTime) override                            {}
@@ -45,7 +39,7 @@ void CImpl::Update()
 }
 
 ///////////////////////////////////////////////////////////////////////////
-ERequestStatus CImpl::Init(uint16 const objectPoolSize, uint16 const eventPoolSize)
+ERequestStatus CImpl::Init(uint16 const objectPoolSize)
 {
 	return ERequestStatus::Success;
 }
@@ -66,7 +60,7 @@ void CImpl::Release()
 }
 
 //////////////////////////////////////////////////////////////////////////
-void CImpl::SetLibraryData(XmlNodeRef const pNode, bool const isLevelSpecific)
+void CImpl::SetLibraryData(XmlNodeRef const pNode, ContextId const contextId)
 {
 }
 
@@ -76,7 +70,7 @@ void CImpl::OnBeforeLibraryDataChanged()
 }
 
 //////////////////////////////////////////////////////////////////////////
-void CImpl::OnAfterLibraryDataChanged()
+void CImpl::OnAfterLibraryDataChanged(int const poolAllocationMode)
 {
 }
 
@@ -117,25 +111,13 @@ ERequestStatus CImpl::StopAllSounds()
 }
 
 //////////////////////////////////////////////////////////////////////////
-void CImpl::SetGlobalParameter(IParameterConnection* const pIParameterConnection, float const value)
+void CImpl::RegisterInMemoryFile(SFileInfo* const pFileInfo)
 {
 }
 
 //////////////////////////////////////////////////////////////////////////
-void CImpl::SetGlobalSwitchState(ISwitchStateConnection* const pISwitchStateConnection)
+void CImpl::UnregisterInMemoryFile(SFileInfo* const pFileInfo)
 {
-}
-
-//////////////////////////////////////////////////////////////////////////
-ERequestStatus CImpl::RegisterInMemoryFile(SFileInfo* const pFileInfo)
-{
-	return ERequestStatus::Success;
-}
-
-//////////////////////////////////////////////////////////////////////////
-ERequestStatus CImpl::UnregisterInMemoryFile(SFileInfo* const pFileInfo)
-{
-	return ERequestStatus::Success;
 }
 
 //////////////////////////////////////////////////////////////////////////
@@ -199,30 +181,6 @@ IListener* CImpl::ConstructListener(CTransformation const& transformation, char 
 {
 	MEMSTAT_CONTEXT(EMemStatContextTypes::MSC_AudioSystem, 0, "CryAudio::Impl::Null::SListener");
 	return static_cast<IListener*>(new SListener());
-}
-
-///////////////////////////////////////////////////////////////////////////
-IEvent* CImpl::ConstructEvent(CEvent& event)
-{
-	MEMSTAT_CONTEXT(EMemStatContextTypes::MSC_AudioSystem, 0, "CryAudio::Impl::Null::SEvent");
-	return static_cast<IEvent*>(new SEvent());
-}
-
-///////////////////////////////////////////////////////////////////////////
-void CImpl::DestructEvent(IEvent const* const pIEvent)
-{
-	delete pIEvent;
-}
-
-//////////////////////////////////////////////////////////////////////////
-IStandaloneFileConnection* CImpl::ConstructStandaloneFileConnection(CStandaloneFile& standaloneFile, char const* const szFile, bool const bLocalized, ITriggerConnection const* pITriggerConnection /*= nullptr*/)
-{
-	return nullptr;
-}
-
-//////////////////////////////////////////////////////////////////////////
-void CImpl::DestructStandaloneFileConnection(IStandaloneFileConnection const* const pIStandaloneFileConnection)
-{
 }
 
 //////////////////////////////////////////////////////////////////////////
@@ -307,12 +265,12 @@ void CImpl::SetLanguage(char const* const szLanguage)
 }
 
 //////////////////////////////////////////////////////////////////////////
-void CImpl::GetFileData(char const* const szName, SFileData& fileData) const
+void CImpl::DrawDebugMemoryInfo(IRenderAuxGeom& auxGeom, float posX, float& posY, bool const drawDetailedInfo)
 {
 }
 
 //////////////////////////////////////////////////////////////////////////
-void CImpl::DrawDebugInfo(IRenderAuxGeom& auxGeom, float posX, float& posY, bool const showDetailedInfo)
+void CImpl::DrawDebugInfoList(IRenderAuxGeom& auxGeom, float& posX, float posY, float const debugDistance, char const* const szTextFilter) const
 {
 }
 } // namespace Null

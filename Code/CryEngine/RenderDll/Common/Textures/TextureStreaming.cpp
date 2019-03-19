@@ -80,7 +80,8 @@ std::vector<CTexture::WantedStat>* CTexture::s_pStatsTexWantedLists = NULL;
 ITextureStreamer* CTexture::s_pTextureStreamer;
 
 CryCriticalSection CTexture::s_streamFormatLock;
-SStreamFormatCode CTexture::s_formatCodes[256];
+enum { MaxFormatCodes = 256 };
+SStreamFormatCode CTexture::s_formatCodes[MaxFormatCodes];
 uint32 CTexture::s_nFormatCodes = 1;
 CTexture::TStreamFormatCodeKeyMap CTexture::s_formatCodeMap;
 
@@ -454,7 +455,6 @@ bool STexStreamInState::TryCommit()
 			}
 
 			// bind new texture
-			const int nNewNumMips = m_nHigherUploadedMip;
 			tp->StreamAssignPoolItem(pNewPoolItem, m_nActivateMip);
 			pNewPoolItem = NULL;
 			tp->SetWasUnload(false);
@@ -916,7 +916,7 @@ bool CTexture::StreamPrepare(CImageFilePtr&& pIM)
 	}
 
 	m_pFileTexMips->m_fMinMipFactor = StreamCalculateMipFactor((m_nMips - m_CacheFileHeader.m_nMipsPersistent) << 8);
-	m_nStreamFormatCode = StreamComputeFormatCode(m_nWidth, m_nHeight, m_nMips, m_eDstFormat, eTM_Optimal);
+	m_nStreamFormatCode = StreamComputeFormatCode(m_nWidth, m_nHeight, m_nMips, m_eDstFormat, eSrcTileMode);
 
 	Relink();
 
@@ -1102,38 +1102,18 @@ uint8 CTexture::StreamComputeFormatCode(uint32 nWidth, uint32 nHeight, uint32 nM
 	TStreamFormatCodeKeyMap::iterator it = s_formatCodeMap.find(key);
 	if (it == s_formatCodeMap.end())
 	{
-		if (s_nFormatCodes == 256)
+		if (s_nFormatCodes == MaxFormatCodes)
 			__debugbreak();
 
 		SStreamFormatCode code;
 		memset(&code, 0, sizeof(code));
 		for (uint32 nMip = nTailMips, nMipWidth = nWidth, nMipHeight = nHeight; nMip < SStreamFormatCode::MaxMips; ++nMip, nMipWidth = max(1u, nMipWidth >> 1), nMipHeight = max(1u, nMipHeight >> 1))
 		{
-			uint32 nMip1Size = CTexture::TextureDataSize(nMipWidth, nMipHeight, 1, SStreamFormatCode::MaxMips - nMip, 1, fmt, mode);
-
-			bool bAppearsLinear = true;
-			bool bAppearsPoT = true;
-
-			// Determine how the size function varies with slices. Currently only supports linear, or aligning slices to next pot
-			for (uint32 nSlices = 1; nSlices <= 32; ++nSlices)
+			for (uint32 nSlices = 1; nSlices <= SStreamFormatCode::MaxSlices; ++nSlices)
 			{
 				uint32 nMipSize = CTexture::TextureDataSize(nMipWidth, nMipHeight, 1, SStreamFormatCode::MaxMips - nMip, nSlices, fmt, mode);
-
-				uint32 nExpectedLinearSize = nMip1Size * nSlices;
-				uint32 nAlignedSlices = 1u << (32 - (nSlices > 1 ? countLeadingZeros32(nSlices - 1) : 32));
-				uint32 nExpectedPoTSize = nMip1Size * nAlignedSlices;
-				if (nExpectedLinearSize != nMipSize)
-					bAppearsLinear = false;
-				if (nExpectedPoTSize != nMipSize)
-					bAppearsPoT = false;
+				code.sizes[nSlices-1][nMip] = nMipSize;
 			}
-
-			// If this fires, we can't encode the size(slices) function
-			if (!bAppearsLinear && !bAppearsPoT)
-				__debugbreak();
-
-			code.sizes[nMip].size = nMip1Size;
-			code.sizes[nMip].alignSlices = !bAppearsLinear && bAppearsPoT;
 		}
 
 		it = s_formatCodeMap.insert(std::make_pair(key, s_nFormatCodes)).first;
@@ -1497,8 +1477,6 @@ void CTexture::InitStreaming()
 	if (!s_pPoolMgr)
 		s_pPoolMgr = new CTextureStreamPoolMgr();
 
-	SSystemGlobalEnvironment* pEnv = iSystem->GetGlobalEnvironment();
-
 #if CRY_PLATFORM_DESKTOP
 	if (CRenderer::CV_r_texturesstreaming)
 	{
@@ -1732,8 +1710,7 @@ void CTexture::AbortStreamingTasks(CTexture* pTex)
 				}
 			}
 
-			bool bCommitted = streamState.TryCommit();
-			assert(bCommitted);
+			CRY_VERIFY(streamState.TryCommit());
 
 			StreamState_ReleaseIn(&streamState);
 		}

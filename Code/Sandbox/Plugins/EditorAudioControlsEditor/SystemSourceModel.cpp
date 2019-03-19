@@ -3,10 +3,12 @@
 #include "StdAfx.h"
 #include "SystemSourceModel.h"
 
-#include "Common.h"
 #include "AudioControlsEditorPlugin.h"
+#include "AssetsManager.h"
 #include "AssetIcons.h"
 #include "AssetUtils.h"
+#include "Context.h"
+#include "FileImporterUtils.h"
 #include "Common/IImpl.h"
 #include "Common/IItem.h"
 #include "Common/ModelUtils.h"
@@ -19,29 +21,28 @@
 namespace ACE
 {
 size_t CSystemSourceModel::s_numDroppedItems = 0;
+constexpr int g_systemSourceNameColumn = static_cast<int>(CSystemSourceModel::EColumns::Name);
 
 //////////////////////////////////////////////////////////////////////////
-QStringList GetScopeNames()
+QStringList GetContextNames()
 {
-	QStringList scopeNames;
-	ScopeInfos scopeInfos;
-	g_assetsManager.GetScopeInfos(scopeInfos);
+	QStringList contextNames;
 
-	for (auto const& scopeInfo : scopeInfos)
+	for (auto const pContext : g_contexts)
 	{
-		scopeNames.append(QString(scopeInfo.name));
+		contextNames.append(QtUtil::ToQString(pContext->GetName()));
 	}
 
-	scopeNames.sort(Qt::CaseInsensitive);
+	contextNames.sort(Qt::CaseInsensitive);
 
-	return scopeNames;
+	return contextNames;
 }
 
 static QStringList const s_typeFilterList {
 	"Trigger", "Parameter", "Switch", "State", "Environment", "Preload" };
 
 static CItemModelAttributeEnum s_typeAttribute("Type", s_typeFilterList, CItemModelAttribute::AlwaysHidden, true);
-static CItemModelAttributeEnumFunc s_scopeAttribute("Scope", &GetScopeNames, CItemModelAttribute::StartHidden, true);
+static CItemModelAttributeEnumFunc s_contextAttribute("Context", &GetContextNames, CItemModelAttribute::StartHidden, true);
 
 //////////////////////////////////////////////////////////////////////////
 bool IsParentValid(EAssetType const parentType, EAssetType const assetType)
@@ -103,7 +104,7 @@ bool ProcessImplDragDropData(QMimeData const* const pData, std::vector<Impl::IIt
 			ControlId id;
 			stream >> id;
 
-			if (id != s_aceInvalidId)
+			if (id != g_invalidControlId)
 			{
 				Impl::IItem* const pIItem = g_pIImpl->GetItem(id);
 
@@ -124,7 +125,7 @@ bool CSystemSourceModel::CanDropData(QMimeData const* const pData, CAsset const&
 	bool canDrop = false;
 	bool hasValidParent = true;
 
-	// Handle first if mime data is an external (from the implementation side) source.
+	// Handle first if mime data is an external (from the impl side) source.
 	std::vector<Impl::IItem*> implItems;
 
 	if (ProcessImplDragDropData(pData, implItems))
@@ -139,6 +140,16 @@ bool CSystemSourceModel::CanDropData(QMimeData const* const pData, CAsset const&
 		}
 
 		canDrop = hasValidParent;
+	}
+	else if (g_pIImpl->CanDropExternalData(pData))
+	{
+		// Handle if mime data is external files that are supported by the middleware.
+		EAssetType const parentType = parent.GetType();
+
+		if ((parentType == EAssetType::Library) || (parentType == EAssetType::Folder))
+		{
+			canDrop = true;
+		}
 	}
 	else
 	{
@@ -181,7 +192,7 @@ bool CSystemSourceModel::DropData(QMimeData const* const pData, CAsset* const pP
 
 	if (CanDropData(pData, *pParent))
 	{
-		// Handle first if mime data is an external (from the implementation side) source
+		// Handle first if mime data is an external (from the impl side) source
 		std::vector<Impl::IItem*> implItems;
 
 		if (ProcessImplDragDropData(pData, implItems))
@@ -194,6 +205,22 @@ bool CSystemSourceModel::DropData(QMimeData const* const pData, CAsset* const pP
 			}
 
 			wasDropped = true;
+		}
+		else if (g_pIImpl->CanDropExternalData(pData))
+		{
+			// Handle if mime data are external files that are supported by the middleware.
+			EAssetType const parentType = pParent->GetType();
+
+			if ((parentType == EAssetType::Library) || (parentType == EAssetType::Folder))
+			{
+				FileImportInfos fileImportInfos;
+
+				if (g_pIImpl->DropExternalData(pData, fileImportInfos))
+				{
+					OpenFileImporter(fileImportInfos, "", false, EImportTargetType::SystemControls, pParent);
+					wasDropped = true;
+				}
+			}
 		}
 		else
 		{
@@ -216,7 +243,6 @@ bool CSystemSourceModel::DropData(QMimeData const* const pData, CAsset* const pP
 CSystemSourceModel::CSystemSourceModel(QObject* const pParent)
 	: QAbstractItemModel(pParent)
 	, m_ignoreLibraryUpdates(false)
-	, m_nameColumn(static_cast<int>(EColumns::Name))
 {
 	ConnectSignals();
 }
@@ -330,8 +356,8 @@ CItemModelAttribute* CSystemSourceModel::GetAttributeForColumn(EColumns const co
 	case EColumns::OnDisk:
 		pAttribute = &ModelUtils::s_onDiskAttribute;
 		break;
-	case EColumns::Scope:
-		pAttribute = &s_scopeAttribute;
+	case EColumns::Context:
+		pAttribute = &s_contextAttribute;
 		break;
 	case EColumns::Name:
 		pAttribute = &Attributes::s_nameAttribute;
@@ -364,7 +390,7 @@ QVariant CSystemSourceModel::GetHeaderData(int const section, Qt::Orientation co
 				}
 				break;
 			case Qt::DisplayRole:
-				// The notification column header uses an icons instead of text.
+				// The notification column header uses an icon instead of text.
 				if (section != static_cast<int>(EColumns::Notification))
 				{
 					variant = pAttribute->GetName();
@@ -631,7 +657,7 @@ bool CSystemSourceModel::setData(QModelIndex const& index, QVariant const& value
 {
 	bool wasDataChanged = false;
 
-	if (index.isValid() && (index.column() == m_nameColumn))
+	if (index.isValid() && (index.column() == g_systemSourceNameColumn))
 	{
 		auto const pAsset = static_cast<CAsset*>(index.internalPointer());
 
@@ -678,7 +704,7 @@ Qt::ItemFlags CSystemSourceModel::flags(QModelIndex const& index) const
 
 	if (index.isValid())
 	{
-		if ((index.column() == m_nameColumn) && !(index.data(static_cast<int>(ModelUtils::ERoles::IsDefaultControl)).toBool()))
+		if ((index.column() == g_systemSourceNameColumn) && !(index.data(static_cast<int>(ModelUtils::ERoles::IsDefaultControl)).toBool()))
 		{
 			flags = QAbstractItemModel::flags(index) | Qt::ItemIsDropEnabled | Qt::ItemIsEditable;
 		}
@@ -768,7 +794,7 @@ Qt::DropActions CSystemSourceModel::supportedDropActions() const
 //////////////////////////////////////////////////////////////////////////
 QStringList CSystemSourceModel::mimeTypes() const
 {
-	QStringList types;
+	QStringList types = QAbstractItemModel::mimeTypes();
 	types << CDragDropData::GetMimeFormatForType(ModelUtils::s_szSystemMimeType);
 	types << CDragDropData::GetMimeFormatForType(ModelUtils::s_szImplMimeType);
 	return types;

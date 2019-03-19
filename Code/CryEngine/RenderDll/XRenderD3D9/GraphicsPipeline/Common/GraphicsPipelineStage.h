@@ -4,16 +4,16 @@
 
 #include <CryMath/Range.h>
 
-// forward declarations
+class CCVarUpdateRecorder;
+class CGraphicsPipeline;
 class CGraphicsPipelineStage;
 class CGraphicsPipelineStateLocalCache;
-class CStandardGraphicsPipeline;
-class CSceneRenderPass;
-class CRenderView;
-class CCVarUpdateRecorder;
-struct SRenderViewInfo;
-class CGraphicsPipeline;
 class CRenderOutput;
+class CRenderView;
+class CSceneRenderPass;
+class CStandardGraphicsPipeline;
+
+struct SRenderViewInfo;
 
 enum class GraphicsPipelinePassType : std::uint8_t
 {
@@ -32,8 +32,6 @@ struct SGraphicsPipelinePassContext
 		, pRenderView(renderView)
 		, techniqueID(technique)
 	{
-
-		;
 	}
 
 	SGraphicsPipelinePassContext(GraphicsPipelinePassType type, CRenderView* renderView, CSceneRenderPass* pSceneRenderPass) 
@@ -100,9 +98,9 @@ public:
 	// If this stage should be updated based on the given flags
 	virtual bool IsStageActive(EShaderRenderingFlags flags) const { return true; }
 
-public:
-	void                             SetRenderView(CRenderView* pRenderView) { m_pRenderView = pRenderView; }
+	virtual void SetRenderView(CRenderView* pRenderView) { m_pRenderView = pRenderView; }
 
+public:
 	CRenderView*                     RenderView() const { return m_pRenderView; }
 	const SRenderViewport&           GetViewport() const;
 
@@ -127,5 +125,7 @@ protected:
 
 private:
 	CGraphicsPipeline* m_pGraphicsPipeline = nullptr;
+
+protected:
 	CRenderView*       m_pRenderView = nullptr;
 };

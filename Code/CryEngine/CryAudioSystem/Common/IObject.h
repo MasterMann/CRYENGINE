@@ -8,6 +8,12 @@ struct IRenderAuxGeom;
 
 namespace CryAudio
 {
+enum class EObjectFunctionality : EnumFlagsType
+{
+	TrackAbsoluteVelocity,
+	TrackRelativeVelocity,
+};
+
 namespace Impl
 {
 struct IEnvironmentConnection;
@@ -15,13 +21,6 @@ struct IEvent;
 struct IParameterConnection;
 struct ISwitchStateConnection;
 struct ITriggerConnection;
-struct IStandaloneFileConnection;
-
-enum class EObjectFunctionality : EnumFlagsType
-{
-	TrackAbsoluteVelocity,
-	TrackRelativeVelocity,
-};
 
 /**
  * An implementation may use this interface to define a class for storing implementation-specific
@@ -48,7 +47,7 @@ struct IObject
 	virtual void SetTransformation(CTransformation const& transformation) = 0;
 
 	/**
-	 * Gets the objects's transformation.
+	 * Gets the object's transformation.
 	 * @return CTransformation of the object.
 	 */
 	virtual CTransformation const& GetTransformation() const = 0;

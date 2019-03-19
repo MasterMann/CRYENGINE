@@ -84,7 +84,6 @@ void CSystem::CreateRendererVars(const SSystemInitParams& startupParams)
 	m_rIntialWindowSizeRatio = REGISTER_FLOAT("r_InitialWindowSizeRatio", 0.666f, VF_DUMPTODISK,
 		"Sets the size ratio of the initial application window in relation to the primary monitor resolution.\n"
 		"Usage: r_InitialWindowSizeRatio [1.0/0.666/..]");
-	const float initialWindowSizeRatio = m_rIntialWindowSizeRatio->GetFVal();
 
 	int iFullScreenDefault  = 1;
 	int iDisplayInfoDefault = 1;
@@ -98,6 +97,7 @@ void CSystem::CreateRendererVars(const SSystemInitParams& startupParams)
 	iHeightDefault = 1080;
 #elif CRY_PLATFORM_WINDOWS
 	iFullScreenDefault = 0;
+	const float initialWindowSizeRatio = m_rIntialWindowSizeRatio->GetFVal();
 	iWidthDefault = static_cast<int>(GetSystemMetrics(SM_CXSCREEN) * initialWindowSizeRatio);
 	iHeightDefault = static_cast<int>(GetSystemMetrics(SM_CYSCREEN) * initialWindowSizeRatio);
 #elif CRY_PLATFORM_LINUX || CRY_PLATFORM_APPLE
@@ -278,6 +278,8 @@ void CSystem::RenderEnd(bool bRenderStats)
 	if (IConsole* pConsole = GetIConsole())
 		pConsole->Draw();
 
+	gEnv->GetJobManager()->SetMainDoneTime(m_env.pTimer->GetAsyncTime());
+
 	m_env.pRenderer->ForceGC(); // XXX Rename this
 	m_env.pRenderer->EndFrame();
 
@@ -329,11 +331,51 @@ void CSystem::RenderPhysicsStatistics(IPhysicalWorld* pWorld)
 		const float fontSize      = 1.3f;
 		ITextModeConsole*  pTMC   = GetITextModeConsole();
 		phys_profile_info* pInfos;
-		phys_job_info* pJobInfos;
 		PhysicsVars* pVars = pWorld->GetPhysVars();
-		int  i             = -2;
+		int  i             = -1;
 		char msgbuf[512];
 
+		if (pVars->bProfileGroups)
+		{
+			int j           = 0, mask, nGroups = pWorld->GetGroupProfileInfo(pInfos);
+			float fColor[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
+			if (!pVars->bProfileEntities)
+				j = 12;
+
+			for (++i; j < nGroups; j++, i++)
+			{
+				pInfos[j].nTicksAvg   = (int)(((int64)pInfos[j].nTicksAvg * 15 + pInfos[j].nTicksLast) >> 4);
+				mask                  = (pInfos[j].nTicksPeak - pInfos[j].nTicksLast) >> 31;
+				mask                 |= (70 - pInfos[j].peakAge) >> 31;
+				pInfos[j].nTicksPeak += pInfos[j].nTicksLast - pInfos[j].nTicksPeak & mask;
+				pInfos[j].nCallsPeak += pInfos[j].nCallsLast - pInfos[j].nCallsPeak & mask;
+				float time     = gEnv->pTimer->TicksToSeconds(pInfos[j].nTicksAvg) * 1000.0f;
+				float timeNorm = time * (1.0f / 32);
+				fColor[1] = fColor[2] = 1.0f - (max(0.7f, min(1.0f, timeNorm)) - 0.7f) * (1.0f / 0.3f);
+				IRenderAuxText::Draw2dLabel(renderMarginX, renderMarginY + i * lineSize, fontSize, fColor, false,
+				  "%s %.2fms/%d (peak %.2fms/%d)", pInfos[j].pName, time, pInfos[j].nCallsLast,
+				  gEnv->pTimer->TicksToSeconds(pInfos[j].nTicksPeak) * 1000.0f, pInfos[j].nCallsPeak);
+				pInfos[j].peakAge = pInfos[j].peakAge + 1 & ~mask;
+				if (j == nGroups - 3) ++i;
+			}
+		}
+		if (pVars->bProfileFunx)
+		{
+			int j, mask, nFunx = pWorld->GetFuncProfileInfo(pInfos);
+			float fColor[4] = { 0.75f, 0.08f, 0.85f, 1.0f };
+			for (j = 0, ++i; j < nFunx; j++, i++)
+			{
+				mask                  = (pInfos[j].nTicksPeak - pInfos[j].nTicks) >> 31;
+				mask                 |= (70 - pInfos[j].peakAge) >> 31;
+				pInfos[j].nTicksPeak += pInfos[j].nTicks - pInfos[j].nTicksPeak & mask;
+				pInfos[j].nCallsPeak += pInfos[j].nCalls - pInfos[j].nCallsPeak & mask;
+				IRenderAuxText::Draw2dLabel(renderMarginX, renderMarginY + i * lineSize, fontSize, fColor, false,
+				  "%s %.2fms/%d (peak %.2fms/%d)", pInfos[j].pName, gEnv->pTimer->TicksToSeconds(pInfos[j].nTicks) * 1000.0f, pInfos[j].nCalls,
+				  gEnv->pTimer->TicksToSeconds(pInfos[j].nTicksPeak) * 1000.0f, pInfos[j].nCallsPeak);
+				pInfos[j].peakAge = pInfos[j].peakAge + 1 & ~mask;
+				pInfos[j].nCalls  = pInfos[j].nTicks = 0;
+			}
+		}
 		if (pVars->bProfileEntities == 1)
 		{
 			pe_status_pos sp;
@@ -351,7 +393,7 @@ void CSystem::RenderPhysicsStatistics(IPhysicalWorld* pWorld)
 			{
 				nMaxEntities = 0;
 			}
-			int j, mask, nEnts = pWorld->GetEntityProfileInfo(pInfos);
+			int j, mask, nEnts = pWorld->GetEntityProfileInfo(pInfos), line0 = ++i;
 			if (nEnts > nMaxEntities)
 			{
 				nEnts = nMaxEntities;
@@ -387,7 +429,7 @@ void CSystem::RenderPhysicsStatistics(IPhysicalWorld* pWorld)
 				  dt = gEnv->pTimer->TicksToSeconds(pInfos[i].nTicksAvg) * 1000.0f, pInfos[i].nCallsAvg,
 				  gEnv->pTimer->TicksToSeconds(pInfos[i].nTicksPeak) * 1000.0f, pInfos[i].nCallsPeak,
 				  pInfos[i].pName ? pInfos[i].pName : "", pInfos[i].id);
-				IRenderAuxText::Draw2dLabel(renderMarginX, renderMarginY + i * lineSize, fontSize, fColor, false, "%s", msgbuf);
+				IRenderAuxText::Draw2dLabel(renderMarginX, renderMarginY + (i + line0) * lineSize, fontSize, fColor, false, "%s", msgbuf);
 				if (pTMC) pTMC->PutText(0, i, msgbuf);
 				IPhysicalEntity* pent = pWorld->GetPhysicalEntityById(pInfos[i].id);
 				if (dt > 0.1f && pInfos[i].pName && pent && pent->GetStatus(&sp))
@@ -411,47 +453,6 @@ void CSystem::RenderPhysicsStatistics(IPhysicalWorld* pWorld)
 					pPlayerEnt->SetRotation(Quat(IDENTITY));
 				}
 				m_iJumpToPhysProfileEnt = 0;
-			}
-		}
-		if (pVars->bProfileFunx)
-		{
-			int j, mask, nFunx = pWorld->GetFuncProfileInfo(pInfos);
-			float fColor[4] = { 0.75f, 0.08f, 0.85f, 1.0f };
-			for (j = 0, ++i; j < nFunx; j++, i++)
-			{
-				mask                  = (pInfos[j].nTicksPeak - pInfos[j].nTicks) >> 31;
-				mask                 |= (70 - pInfos[j].peakAge) >> 31;
-				pInfos[j].nTicksPeak += pInfos[j].nTicks - pInfos[j].nTicksPeak & mask;
-				pInfos[j].nCallsPeak += pInfos[j].nCalls - pInfos[j].nCallsPeak & mask;
-				IRenderAuxText::Draw2dLabel(renderMarginX, renderMarginY + i * lineSize, fontSize, fColor, false,
-				  "%s %.2fms/%d (peak %.2fms/%d)", pInfos[j].pName, gEnv->pTimer->TicksToSeconds(pInfos[j].nTicks) * 1000.0f, pInfos[j].nCalls,
-				  gEnv->pTimer->TicksToSeconds(pInfos[j].nTicksPeak) * 1000.0f, pInfos[j].nCallsPeak);
-				pInfos[j].peakAge = pInfos[j].peakAge + 1 & ~mask;
-				pInfos[j].nCalls  = pInfos[j].nTicks = 0;
-			}
-		}
-		if (pVars->bProfileGroups)
-		{
-			int j           = 0, mask, nGroups = pWorld->GetGroupProfileInfo(pInfos), nJobs = pWorld->GetJobProfileInfo(pJobInfos);
-			float fColor[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
-			if (!pVars->bProfileEntities)
-				j = 12;
-
-			for (++i; j < nGroups; j++, i++)
-			{
-				pInfos[j].nTicksAvg   = (int)(((int64)pInfos[j].nTicksAvg * 15 + pInfos[j].nTicksLast) >> 4);
-				mask                  = (pInfos[j].nTicksPeak - pInfos[j].nTicksLast) >> 31;
-				mask                 |= (70 - pInfos[j].peakAge) >> 31;
-				pInfos[j].nTicksPeak += pInfos[j].nTicksLast - pInfos[j].nTicksPeak & mask;
-				pInfos[j].nCallsPeak += pInfos[j].nCallsLast - pInfos[j].nCallsPeak & mask;
-				float time     = gEnv->pTimer->TicksToSeconds(pInfos[j].nTicksAvg) * 1000.0f;
-				float timeNorm = time * (1.0f / 32);
-				fColor[1] = fColor[2] = 1.0f - (max(0.7f, min(1.0f, timeNorm)) - 0.7f) * (1.0f / 0.3f);
-				IRenderAuxText::Draw2dLabel(renderMarginX, renderMarginY + i * lineSize, fontSize, fColor, false,
-				  "%s %.2fms/%d (peak %.2fms/%d)", pInfos[j].pName, time, pInfos[j].nCallsLast,
-				  gEnv->pTimer->TicksToSeconds(pInfos[j].nTicksPeak) * 1000.0f, pInfos[j].nCallsPeak);
-				pInfos[j].peakAge = pInfos[j].peakAge + 1 & ~mask;
-				if (j == nGroups - 3) ++i;
 			}
 		}
 		if (pVars->bProfileEntities == 2)
@@ -484,13 +485,13 @@ void CSystem::RenderJobStats()
 	gEnv->GetJobManager()->Update(m_sys_job_system_profiler->GetIVal());
 	gEnv->GetJobManager()->SetJobSystemEnabled(m_sys_job_system_enable->GetIVal());
 
-	JobManager::IBackend* const __restrict pThreadBackEnd   = gEnv->GetJobManager()->GetBackEnd(JobManager::eBET_Thread);
-	JobManager::IBackend* const __restrict pBlockingBackEnd = gEnv->GetJobManager()->GetBackEnd(JobManager::eBET_Blocking);
-
 #if defined(ENABLE_PROFILING_CODE)
 	if (m_FrameProfileSystem.IsEnabled())
 	{
 #if defined(JOBMANAGER_SUPPORT_FRAMEPROFILER)
+
+		JobManager::IBackend* const __restrict pThreadBackEnd = gEnv->GetJobManager()->GetBackEnd(JobManager::eBET_Thread);
+		JobManager::IBackend* const __restrict pBlockingBackEnd = gEnv->GetJobManager()->GetBackEnd(JobManager::eBET_Blocking);
 
 		// Get none-blocking job & worker profile stats
 		if (pThreadBackEnd)
@@ -840,7 +841,6 @@ void CSystem::RenderOverscanBorders()
 		int iOverscanBordersDrawDebugView = m_rOverscanBordersDrawDebugView->GetIVal();
 		if (iOverscanBordersDrawDebugView)
 		{
-			const int texId          = -1;
 			const float uv           = 0.0f;
 			const float rot          = 0.0f;
 			const int whiteTextureId = m_env.pRenderer->GetWhiteTextureId();

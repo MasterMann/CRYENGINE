@@ -570,10 +570,10 @@ void SDisplayContext::DrawWireSphere(const Vec3& pos, const Vec3 radius)
 	}
 }
 
-void SDisplayContext::DrawWireQuad2d(const CPoint& pmin, const CPoint& pmax, float z)
+void SDisplayContext::DrawWireQuad2d(const CPoint& pmin, const CPoint& pmax, float z, bool drawInFront, bool depthTest)
 {
 	int prevState = GetState();
-	SetState((prevState | e_Mode2D) & (~e_Mode3D));
+	SetState((prevState | e_Mode2D | (drawInFront ? e_DrawInFrontOn : e_DrawInFrontOff) | (depthTest ? e_DepthTestOn : e_DepthTestOff) & (~e_Mode3D)));
 	InternalDrawLine(Vec3(float(pmin.x), float(pmin.y), z), m_color4b, Vec3(float(pmax.x), float(pmin.y), z), m_color4b);
 	InternalDrawLine(Vec3(float(pmax.x), float(pmin.y), z), m_color4b, Vec3(float(pmax.x), float(pmax.y), z), m_color4b);
 	InternalDrawLine(Vec3(float(pmax.x), float(pmax.y), z), m_color4b, Vec3(float(pmin.x), float(pmax.y), z), m_color4b);
@@ -863,7 +863,6 @@ void SDisplayContext::DrawTextOn2DBox(const Vec3& pos, const char* text, float t
 	int vx = 0, vy = 0, vw = m_width, vh = m_height;
 
 	uint32 backupstate = GetState();
-	int backupThickness = int(GetLineWidth());
 
 	SetState(backupstate | e_DepthTestOff);
 

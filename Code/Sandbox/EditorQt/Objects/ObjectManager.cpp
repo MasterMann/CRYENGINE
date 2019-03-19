@@ -224,12 +224,12 @@ private:
 // other UNDO operations depending on the guids won't work
 void ExtractRemapingInformation(CBaseObject* pPrefab, TGUIDRemap& remapInfo)
 {
-	std::vector<CBaseObject*> children;
-	pPrefab->GetAllPrefabFlagedChildren(children);
+	std::vector<CBaseObject*> descendants;
+	pPrefab->GetAllPrefabFlagedDescendants(descendants);
 
-	for (size_t i = 0, count = children.size(); i < count; ++i)
+	for (size_t i = 0, count = descendants.size(); i < count; ++i)
 	{
-		remapInfo.insert(std::make_pair(children[i]->GetIdInPrefab(), children[i]->GetId()));
+		remapInfo.insert(std::make_pair(descendants[i]->GetIdInPrefab(), descendants[i]->GetId()));
 	}
 }
 
@@ -237,15 +237,15 @@ void RemapObjectsInPrefab(CBaseObject* pPrefab, const TGUIDRemap& remapInfo)
 {
 	IObjectManager* pObjMan = GetIEditorImpl()->GetObjectManager();
 
-	std::vector<CBaseObject*> children;
-	pPrefab->GetAllPrefabFlagedChildren(children);
+	std::vector<CBaseObject*> descendants;
+	pPrefab->GetAllPrefabFlagedDescendants(descendants);
 
-	for (size_t i = 0, count = children.size(); i < count; ++i)
+	for (size_t i = 0, count = descendants.size(); i < count; ++i)
 	{
-		TGUIDRemap::const_iterator it = remapInfo.find(children[i]->GetIdInPrefab());
+		TGUIDRemap::const_iterator it = remapInfo.find(descendants[i]->GetIdInPrefab());
 		if (it != remapInfo.end())
 		{
-			pObjMan->ChangeObjectId(children[i]->GetId(), (*it).second);
+			pObjMan->ChangeObjectId(descendants[i]->GetId(), (*it).second);
 		}
 	}
 }
@@ -1340,11 +1340,11 @@ void CObjectManager::ShowDuplicationMsgWarning(CBaseObject* obj, const string& n
 		string sRenameWarning("");
 		sRenameWarning.Format
 		(
-		  "%s \"%s\" was NOT renamed to \"%s\" because %s with the same name already exists.",
-		  obj->GetClassDesc()->ClassName(),
-		  obj->GetName().GetString(),
-		  newName.GetString(),
-		  pExisting->GetClassDesc()->ClassName()
+			"%s \"%s\" was NOT renamed to \"%s\" because %s with the same name already exists.",
+			obj->GetClassDesc()->ClassName(),
+			obj->GetName().GetString(),
+			newName.GetString(),
+			pExisting->GetClassDesc()->ClassName()
 		);
 
 		if (bShowMsgBox)
@@ -1363,10 +1363,10 @@ void CObjectManager::ShowInvalidNameMsgWarning(CBaseObject* obj, const string& n
 	string sRenameWarning("");
 	sRenameWarning.Format
 	(
-	  "%s \"%s\" was NOT renamed to \"%s\" because that name is invalid.",
-	  obj->GetClassDesc()->ClassName(),
-	  obj->GetName().GetString(),
-	  newName.GetString()
+		"%s \"%s\" was NOT renamed to \"%s\" because that name is invalid.",
+		obj->GetClassDesc()->ClassName(),
+		obj->GetName().GetString(),
+		newName.GetString()
 	);
 
 	if (bShowMsgBox)
@@ -1721,7 +1721,6 @@ void CObjectManager::LinkToBone(const std::vector<CBaseObject*>& objects, CEntit
 
 	IEntity* pIEntity = pLinkTo->GetIEntity();
 	ICharacterInstance* pCharacter = pIEntity->GetCharacter(0);
-	ISkeletonPose* pSkeletonPose = pCharacter->GetISkeletonPose();
 	IDefaultSkeleton& rIDefaultSkeleton = pCharacter->GetIDefaultSkeleton();
 	const uint32 numJoints = rIDefaultSkeleton.GetJointCount();
 
@@ -2069,13 +2068,10 @@ void CObjectManager::EmitPopulateInspectorEvent() const
 		}
 		else if (objectCount > 1)
 		{
-			char numString[30];
-			snprintf(numString, arraysize(numString), "%zu", objectCount);
-			szTitle = numString;
-			szTitle += " Selected Objects";
+			szTitle.sprintf("%zu Selected Objects", objectCount);
 		}
 
-		PopulateInspectorEvent popEvent([](CInspector& inspector)
+		PopulateLegacyInspectorEvent popEvent([](CInspectorLegacy& inspector)
 		{
 			const CSelectionGroup* pSelectionGroup = GetIEditorImpl()->GetObjectManager()->GetSelection();
 			CInspectorWidgetCreator creator;
@@ -2560,13 +2556,9 @@ bool CObjectManager::HitTest(HitContext& hitInfo)
 	}
 	hc.rayDir = hc.rayDir.GetNormalized();
 
-	float mindist = FLT_MAX;
-
 	// Only HitTest objects, that where previously Displayed.
 	CBaseObjectsCache* pDispayedViewObjects = hitInfo.view->GetVisibleObjectsCache();
 
-	CBaseObject* selected = 0;
-	const char* name = nullptr;
 	int numVis = pDispayedViewObjects->GetObjectCount();
 	for (int i = 0; i < numVis; i++)
 	{
@@ -3011,7 +3003,7 @@ void CObjectManager::Serialize(XmlNodeRef& xmlNode, bool bLoading, int flags)
 		if (root)
 		{
 			ar.node = root;
-			LoadObjects(ar, false);
+			LoadObjects(ar);
 		}
 		EndObjectsLoading();
 	}
@@ -3027,7 +3019,33 @@ void CObjectManager::Serialize(XmlNodeRef& xmlNode, bool bLoading, int flags)
 	}
 }
 
-void CObjectManager::LoadObjects(CObjectArchive& objectArchive, bool bSelect)
+void CObjectManager::CreateAndSelectObjects(CObjectArchive& objectArchive)
+{
+	LOADING_TIME_PROFILE_SECTION
+	CUndo undo("Create and Select Objects");
+	ClearSelection();
+
+	LoadObjects(objectArchive);
+	auto loadedObjectCount = objectArchive.GetLoadedObjectsCount();
+
+	// Add all newly created objects to selection
+	std::vector<CBaseObject*> objectsToSelect;
+	objectsToSelect.reserve(loadedObjectCount);
+
+	// Generate unique names and track objects to select
+	for (auto i = 0; i < loadedObjectCount; ++i)
+	{
+		CBaseObject* pObject = objectArchive.GetLoadedObject(i);
+		// Make sure the new objects have unique names
+		pObject->SetName(GenUniqObjectName(pObject->GetName()));
+		// Also add them to the list of objects to be selected
+		objectsToSelect.push_back(pObject);
+	}
+
+	SelectObjects(objectsToSelect);
+}
+
+void CObjectManager::LoadObjects(CObjectArchive& objectArchive)
 {
 	LOADING_TIME_PROFILE_SECTION;
 	m_bLoadingObjects = true;
@@ -3035,21 +3053,8 @@ void CObjectManager::LoadObjects(CObjectArchive& objectArchive, bool bSelect)
 	// Prevent the prefab manager from updating prefab instances
 	CPrefabManager::SkipPrefabUpdate skipUpdates;
 
-	XmlNodeRef objectsNode = objectArchive.node;
-	int numObjects = objectsNode->getChildCount();
-	std::vector<CBaseObject*> objects;
-	objects.reserve(numObjects);
-	for (int i = 0; i < numObjects; i++)
-	{
-		CBaseObject* obj = objectArchive.LoadObject(objectsNode->getChild(i));
-		if (obj && bSelect)
-		{
-			objects.push_back(obj);
-		}
-	}
-	CBatchProcessDispatcher batchProcessDispatcher;
-	batchProcessDispatcher.Start(objects, true);
-	AddObjectsToSelection(objects);
+	objectArchive.LoadObjects(objectArchive.node);
+
 	EndObjectsLoading(); // End progress bar, here, Resolve objects have his own.
 	objectArchive.ResolveObjects(true);
 
@@ -3203,6 +3208,10 @@ bool CObjectManager::SetObjectSelected(CBaseObject* pObject, bool bSelect, bool 
 	CRY_PROFILE_FUNCTION(PROFILE_EDITOR);
 
 	CRY_ASSERT(pObject);
+
+	// Make sure the object cannot be selected if it's locked
+	if (pObject->IsFrozen() && bSelect)
+		return false;
 
 	// Only select/unselect once. And only select objects types that are selectable (not masked)
 	if (pObject->IsSelected() == bSelect || (bSelect && (pObject->GetType() & ~gViewportSelectionPreferences.objectSelectMask)))

@@ -11,19 +11,23 @@
 #include <CryAnimation/ICryAnimation.h>
 #include <CryEntitySystem/IEntity.h>
 
-dll_string CharacterAnimationSelector(const SResourceSelectorContext& x, const char* previousValue, IEntity* pEntity)
+SResourceSelectionResult CharacterAnimationSelector(const SResourceSelectorContext& context, const char* previousValue, IEntity* pEntity)
 {
+	SResourceSelectionResult result { false, previousValue };
+
 	if (!pEntity || !pEntity->GetCharacter(0) || !pEntity->GetCharacter(0)->GetIAnimationSet())
-		return previousValue;
+	{
+		return result;
+	}
 
 	IAnimationSet* pAnimSet = pEntity->GetCharacter(0)->GetIAnimationSet();
 	CCharacterAnimationsModel* pModel = new CCharacterAnimationsModel(*pAnimSet);
-	CTreeViewDialog dialog(x.parentWidget);
+	CTreeViewDialog dialog(context.parentWidget);
 	QString selectedValue(previousValue);
 
 	dialog.Initialize(pModel, 0);
 
-	for (int32 row = pModel->rowCount(); row--; )
+	for (int32 row = pModel->rowCount(); row--;)
 	{
 		const QModelIndex index = pModel->index(row, 0);
 		if (pModel->data(index, Qt::DisplayRole).value<QString>() == selectedValue)
@@ -32,25 +36,32 @@ dll_string CharacterAnimationSelector(const SResourceSelectorContext& x, const c
 		}
 	}
 
-	if (dialog.exec())
+	result.selectionAccepted = dialog.exec();
+	if (result.selectionAccepted)
 	{
 		QModelIndex index = dialog.GetSelected();
 		if (index.isValid())
 		{
-			return index.data().value<QString>().toLocal8Bit().data();
+			result.selectedResource = index.data().value<QString>().toLocal8Bit().data();
 		}
 	}
 
-	return previousValue;
+	return result;
 }
 
-dll_string ValidateCharacterAnimation(const SResourceSelectorContext& x, const char* newValue, const char* previousValue, IEntity* pEntity)
+SResourceValidationResult ValidateCharacterAnimation(const SResourceSelectorContext& context, const char* newValue, const char* previousValue, IEntity* pEntity)
 {
+	SResourceValidationResult result{ false, previousValue };
 	if (!newValue || !*newValue)
-		return dll_string();
+	{
+		result.validatedResource = "";
+		return result;
+	}
 
 	if (!pEntity || !pEntity->GetCharacter(0) || !pEntity->GetCharacter(0)->GetIAnimationSet())
-		return previousValue;
+	{
+		return result;
+	}
 
 	IAnimationSet* pAnimSet = pEntity->GetCharacter(0)->GetIAnimationSet();
 	CCharacterAnimationsModel* pModel = new CCharacterAnimationsModel(*pAnimSet);
@@ -59,15 +70,19 @@ dll_string ValidateCharacterAnimation(const SResourceSelectorContext& x, const c
 	{
 		QModelIndex index = pModel->index(i, 0);
 		if (pModel->data(index, Qt::DisplayRole).value<QString>() == newValue)
-			return newValue;
+		{
+			result.validatedResource = newValue;
+			result.isValid = true;
+			return result;
+		}
 	}
 
-	return previousValue;
+	return result;
 }
 
-dll_string ValidateTrackCharacterAnimation(const SResourceSelectorContext& x, const char* newValue, const char* previousValue, IEntity* pEntity)
+SResourceValidationResult ValidateTrackCharacterAnimation(const SResourceSelectorContext& context, const char* newValue, const char* previousValue, IEntity* pEntity)
 {
-	return newValue;
+	return { true, newValue };
 }
 
 REGISTER_RESOURCE_VALIDATING_SELECTOR("TrackCharacterAnimation", CharacterAnimationSelector, ValidateTrackCharacterAnimation, "")

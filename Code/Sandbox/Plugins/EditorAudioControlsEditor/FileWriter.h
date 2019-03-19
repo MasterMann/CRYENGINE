@@ -2,7 +2,7 @@
 
 #pragma once
 
-#include "Common/SharedData.h"
+#include "Common.h"
 
 namespace ACE
 {
@@ -26,7 +26,7 @@ public:
 
 private:
 
-	void WriteLibrary(CLibrary& library);
+	void WriteLibrary(CLibrary& library, ContextIds& contextIds);
 
 	FileNames& m_previousLibraryPaths;
 	FileNames  m_foundLibraryPaths;

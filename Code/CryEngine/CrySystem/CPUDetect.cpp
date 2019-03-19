@@ -39,7 +39,7 @@
 #define MMX_FLAG    0x800000
 #define ISSE_FLAG   0x2000000
 
-#if defined(CRY_COMPILER_GCC)
+#if defined(CRY_COMPILER_GCC) || defined(CRY_COMPILER_CLANG)
 	#define cpuid(op, eax, ebx, ecx, edx) __asm__("cpuid" : "=a" (eax), "=b" (ebx), "=c" (ecx), "=d" (edx) : "a" (op) : "cc");
 #endif
 
@@ -1094,7 +1094,6 @@ void CCpuFeatures::Detect(void)
 	CryLogAlways("");
 
 	DWORD_PTR process_affinity_mask;
-	uint32 thread_processor_mask = 1;
 	process_affinity_mask = 1;
 
 	/* get the system info to derive the number of processors within the system. */

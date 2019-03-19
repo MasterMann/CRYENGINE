@@ -2,33 +2,33 @@
 
 #include "stdafx.h"
 #include "Impl.h"
-#include "Event.h"
+#include "Common.h"
 #include "CVars.h"
-#include "EnvironmentBus.h"
-#include "EnvironmentParameter.h"
-#include "File.h"
+#include "Bank.h"
+#include "Event.h"
+#include "EventInstance.h"
 #include "Listener.h"
 #include "GlobalObject.h"
 #include "Object.h"
 #include "Parameter.h"
-#include "ProgrammerSoundFile.h"
-#include "Setting.h"
-#include "StandaloneFile.h"
-#include "SwitchState.h"
-#include "Trigger.h"
-#include "VcaParameter.h"
+#include "ParameterEnvironment.h"
+#include "ParameterState.h"
+#include "Return.h"
+#include "Snapshot.h"
+#include "Vca.h"
 #include "VcaState.h"
 #include "GlobalData.h"
+
+#include <ISettingConnection.h>
 #include <FileInfo.h>
-#include <Logger.h>
 #include <CrySystem/File/ICryPak.h>
 #include <CrySystem/IProjectManager.h>
 #include <CryAudio/IAudioSystem.h>
 
-#if defined(INCLUDE_FMOD_IMPL_PRODUCTION_CODE)
-	#include "Debug.h"
-	#include <CryRenderer/IRenderAuxGeom.h>
-#endif  // INCLUDE_FMOD_IMPL_PRODUCTION_CODE
+#if defined(CRY_AUDIO_IMPL_FMOD_USE_DEBUG_CODE)
+	#include <Logger.h>
+	#include <DebugStyle.h>
+#endif  // CRY_AUDIO_IMPL_FMOD_USE_DEBUG_CODE
 
 namespace CryAudio
 {
@@ -37,130 +37,162 @@ namespace Impl
 namespace Fmod
 {
 SPoolSizes g_poolSizes;
-SPoolSizes g_poolSizesLevelSpecific;
+std::map<ContextId, SPoolSizes> g_contextPoolSizes;
 
-#if defined(INCLUDE_FMOD_IMPL_PRODUCTION_CODE)
+#if defined(CRY_AUDIO_IMPL_FMOD_USE_DEBUG_CODE)
 SPoolSizes g_debugPoolSizes;
-#endif  // INCLUDE_FMOD_IMPL_PRODUCTION_CODE
+EventInstances g_constructedEventInstances;
+uint16 g_objectPoolSize = 0;
+uint16 g_eventInstancePoolSize = 0;
+#endif  // CRY_AUDIO_IMPL_FMOD_USE_DEBUG_CODE
 
-char const* const CImpl::s_szEventPrefix = "event:/";
-char const* const CImpl::s_szSnapshotPrefix = "snapshot:/";
-char const* const CImpl::s_szBusPrefix = "bus:/";
-char const* const CImpl::s_szVcaPrefix = "vca:/";
+constexpr char const* g_szEventPrefix = "event:/";
+constexpr char const* g_szSnapshotPrefix = "snapshot:/";
+constexpr char const* g_szBusPrefix = "bus:/";
+constexpr char const* g_szVcaPrefix = "vca:/";
 
-std::vector<CBaseObject*> g_constructedObjects;
-
-static constexpr size_t s_maxFileSize = size_t(1) << size_t(31);
+constexpr size_t g_maxFileSize = size_t(1) << size_t(31);
 
 //////////////////////////////////////////////////////////////////////////
 void CountPoolSizes(XmlNodeRef const pNode, SPoolSizes& poolSizes)
 {
-	uint16 numTriggers = 0;
-	pNode->getAttr(s_szTriggersAttribute, numTriggers);
-	poolSizes.triggers += numTriggers;
+	uint16 numEvents = 0;
+	pNode->getAttr(g_szEventsAttribute, numEvents);
+	poolSizes.events += numEvents;
 
 	uint16 numParameters = 0;
-	pNode->getAttr(s_szParametersAttribute, numParameters);
+	pNode->getAttr(g_szParametersAttribute, numParameters);
 	poolSizes.parameters += numParameters;
 
-	uint16 numSwitchStates = 0;
-	pNode->getAttr(s_szSwitchStatesAttribute, numSwitchStates);
-	poolSizes.switchStates += numSwitchStates;
+	uint16 numParameterEnvironments = 0;
+	pNode->getAttr(g_szParameterEnvironmentsAttribute, numParameterEnvironments);
+	poolSizes.parameterEnvironments += numParameterEnvironments;
 
-	uint16 numEnvBuses = 0;
-	pNode->getAttr(s_szEnvBusesAttribute, numEnvBuses);
-	poolSizes.envBuses += numEnvBuses;
+	uint16 numParameterStates = 0;
+	pNode->getAttr(g_szParameterStatesAttribute, numParameterStates);
+	poolSizes.parameterStates += numParameterStates;
 
-	uint16 numEnvParameters = 0;
-	pNode->getAttr(s_szEnvParametersAttribute, numEnvParameters);
-	poolSizes.envParameters += numEnvParameters;
+	uint16 numSnapshots = 0;
+	pNode->getAttr(g_szSnapshotsAttribute, numSnapshots);
+	poolSizes.snapshots += numSnapshots;
 
-	uint16 numVcaParameters = 0;
-	pNode->getAttr(s_szVcaParametersAttribute, numVcaParameters);
-	poolSizes.vcaParameters += numVcaParameters;
+	uint16 numReturns = 0;
+	pNode->getAttr(g_szReturnsAttribute, numReturns);
+	poolSizes.returns += numReturns;
+
+	uint16 numVcas = 0;
+	pNode->getAttr(g_szVcasAttribute, numVcas);
+	poolSizes.vcas += numVcas;
 
 	uint16 numVcaStates = 0;
-	pNode->getAttr(s_szVcaStatesAttribute, numVcaStates);
+	pNode->getAttr(g_szVcaStatesAttribute, numVcaStates);
 	poolSizes.vcaStates += numVcaStates;
 
-	uint16 numFiles = 0;
-	pNode->getAttr(s_szFilesAttribute, numFiles);
-	poolSizes.files += numFiles;
+	uint16 numBanks = 0;
+	pNode->getAttr(g_szBanksAttribute, numBanks);
+	poolSizes.banks += numBanks;
 }
 
 //////////////////////////////////////////////////////////////////////////
 void AllocateMemoryPools(uint16 const objectPoolSize, uint16 const eventPoolSize)
 {
 	CObject::CreateAllocator(objectPoolSize);
-	CEvent::CreateAllocator(eventPoolSize);
-	CTrigger::CreateAllocator(g_poolSizes.triggers);
+	CEventInstance::CreateAllocator(eventPoolSize);
+	CEvent::CreateAllocator(g_poolSizes.events);
 	CParameter::CreateAllocator(g_poolSizes.parameters);
-	CSwitchState::CreateAllocator(g_poolSizes.switchStates);
-	CEnvironmentBus::CreateAllocator(g_poolSizes.envBuses);
-	CEnvironmentParameter::CreateAllocator(g_poolSizes.envParameters);
-	CVcaParameter::CreateAllocator(g_poolSizes.vcaParameters);
+	CParameterEnvironment::CreateAllocator(g_poolSizes.parameterEnvironments);
+	CParameterState::CreateAllocator(g_poolSizes.parameterStates);
+	CSnapshot::CreateAllocator(g_poolSizes.snapshots);
+	CReturn::CreateAllocator(g_poolSizes.returns);
+	CVca::CreateAllocator(g_poolSizes.vcas);
 	CVcaState::CreateAllocator(g_poolSizes.vcaStates);
-	CFile::CreateAllocator(g_poolSizes.files);
+	CBank::CreateAllocator(g_poolSizes.banks);
 }
 
 //////////////////////////////////////////////////////////////////////////
 void FreeMemoryPools()
 {
 	CObject::FreeMemoryPool();
+	CEventInstance::FreeMemoryPool();
 	CEvent::FreeMemoryPool();
-	CTrigger::FreeMemoryPool();
 	CParameter::FreeMemoryPool();
-	CSwitchState::FreeMemoryPool();
-	CEnvironmentBus::FreeMemoryPool();
-	CEnvironmentParameter::FreeMemoryPool();
-	CVcaParameter::FreeMemoryPool();
+	CParameterEnvironment::FreeMemoryPool();
+	CParameterState::FreeMemoryPool();
+	CSnapshot::FreeMemoryPool();
+	CReturn::FreeMemoryPool();
+	CVca::FreeMemoryPool();
 	CVcaState::FreeMemoryPool();
-	CFile::FreeMemoryPool();
+	CBank::FreeMemoryPool();
+}
+
+//////////////////////////////////////////////////////////////////////////
+void ClearActiveSnapshots()
+{
+	for (auto const& snapshotInstancePair : g_activeSnapshots)
+	{
+		snapshotInstancePair.second->release();
+	}
+
+#if defined(CRY_AUDIO_IMPL_FMOD_USE_DEBUG_CODE)
+	g_activeSnapshotNames.clear();
+#endif    // CRY_AUDIO_IMPL_FMOD_USE_DEBUG_CODE
 }
 
 ///////////////////////////////////////////////////////////////////////////
 CImpl::CImpl()
-	: m_pSystem(nullptr)
-	, m_pLowLevelSystem(nullptr)
-	, m_pMasterBank(nullptr)
+	: m_pMasterBank(nullptr)
 	, m_pMasterAssetsBank(nullptr)
 	, m_pMasterStreamsBank(nullptr)
 	, m_pMasterStringsBank(nullptr)
 {
+	g_pImpl = this;
 }
 
 ///////////////////////////////////////////////////////////////////////////
 void CImpl::Update()
 {
-	if (m_pSystem != nullptr)
+	if (g_pSystem != nullptr)
 	{
-		FMOD_RESULT const fmodResult = m_pSystem->update();
-		ASSERT_FMOD_OK;
+		CRY_VERIFY(g_pSystem->update() == FMOD_OK);
 	}
 }
 
 ///////////////////////////////////////////////////////////////////////////
-ERequestStatus CImpl::Init(uint16 const objectPoolSize, uint16 const eventPoolSize)
+ERequestStatus CImpl::Init(uint16 const objectPoolSize)
 {
-	g_constructedObjects.reserve(static_cast<size_t>(objectPoolSize));
-	AllocateMemoryPools(objectPoolSize, eventPoolSize);
+	if (g_cvars.m_eventPoolSize < 1)
+	{
+		g_cvars.m_eventPoolSize = 1;
 
-	m_regularSoundBankFolder = AUDIO_SYSTEM_DATA_ROOT;
+#if defined(CRY_AUDIO_IMPL_FMOD_USE_DEBUG_CODE)
+		Cry::Audio::Log(ELogType::Warning, R"(Event pool size must be at least 1. Forcing the cvar "s_FmodEventPoolSize" to 1!)");
+#endif    // CRY_AUDIO_IMPL_FMOD_USE_DEBUG_CODE
+	}
+
+	g_constructedObjects.reserve(static_cast<size_t>(objectPoolSize));
+	AllocateMemoryPools(objectPoolSize, static_cast<uint16>(g_cvars.m_eventPoolSize));
+
+	m_regularSoundBankFolder = CRY_AUDIO_DATA_ROOT;
 	m_regularSoundBankFolder += "/";
-	m_regularSoundBankFolder += s_szImplFolderName;
+	m_regularSoundBankFolder += g_szImplFolderName;
 	m_regularSoundBankFolder += "/";
-	m_regularSoundBankFolder += s_szAssetsFolderName;
+	m_regularSoundBankFolder += g_szAssetsFolderName;
 	m_localizedSoundBankFolder = m_regularSoundBankFolder;
 
-	FMOD_RESULT fmodResult = FMOD::Studio::System::create(&m_pSystem);
-	ASSERT_FMOD_OK;
-	fmodResult = m_pSystem->getLowLevelSystem(&m_pLowLevelSystem);
-	ASSERT_FMOD_OK;
+	FMOD_RESULT fmodResult = FMOD::Studio::System::create(&g_pSystem);
+	CRY_AUDIO_IMPL_FMOD_ASSERT_OK;
+	fmodResult = g_pSystem->getLowLevelSystem(&g_pLowLevelSystem);
+	CRY_AUDIO_IMPL_FMOD_ASSERT_OK;
 
-#if defined(INCLUDE_FMOD_IMPL_PRODUCTION_CODE)
+#if defined(CRY_AUDIO_IMPL_FMOD_USE_DEBUG_CODE)
+	g_constructedEventInstances.reserve(static_cast<size_t>(g_cvars.m_eventPoolSize));
+
+	g_objectPoolSize = objectPoolSize;
+	g_eventInstancePoolSize = static_cast<uint16>(g_cvars.m_eventPoolSize);
+
 	uint32 version = 0;
-	fmodResult = m_pLowLevelSystem->getVersion(&version);
-	ASSERT_FMOD_OK;
+	fmodResult = g_pLowLevelSystem->getVersion(&version);
+	CRY_AUDIO_IMPL_FMOD_ASSERT_OK;
 
 	CryFixedStringT<MaxInfoStringLength> systemVersion;
 	systemVersion.Format("%08x", version);
@@ -169,42 +201,42 @@ ERequestStatus CImpl::Init(uint16 const objectPoolSize, uint16 const eventPoolSi
 	CreateVersionString(systemVersion);
 	CreateVersionString(headerVersion);
 
-	m_name = FMOD_IMPL_INFO_STRING;
+	m_name = CRY_AUDIO_IMPL_FMOD_INFO_STRING;
 	m_name += "System: ";
 	m_name += systemVersion;
 	m_name += " - Header: ";
 	m_name += headerVersion;
-#endif  // INCLUDE_FMOD_IMPL_PRODUCTION_CODE
+#endif  // CRY_AUDIO_IMPL_FMOD_USE_DEBUG_CODE
 
 	int sampleRate = 0;
 	int numRawSpeakers = 0;
 	FMOD_SPEAKERMODE speakerMode = FMOD_SPEAKERMODE_DEFAULT;
-	fmodResult = m_pLowLevelSystem->getSoftwareFormat(&sampleRate, &speakerMode, &numRawSpeakers);
-	ASSERT_FMOD_OK;
-	fmodResult = m_pLowLevelSystem->setSoftwareFormat(sampleRate, speakerMode, numRawSpeakers);
-	ASSERT_FMOD_OK;
+	fmodResult = g_pLowLevelSystem->getSoftwareFormat(&sampleRate, &speakerMode, &numRawSpeakers);
+	CRY_AUDIO_IMPL_FMOD_ASSERT_OK;
+	fmodResult = g_pLowLevelSystem->setSoftwareFormat(sampleRate, speakerMode, numRawSpeakers);
+	CRY_AUDIO_IMPL_FMOD_ASSERT_OK;
 
-	fmodResult = m_pLowLevelSystem->set3DSettings(g_cvars.m_dopplerScale, g_cvars.m_distanceFactor, g_cvars.m_rolloffScale);
-	ASSERT_FMOD_OK;
+	fmodResult = g_pLowLevelSystem->set3DSettings(g_cvars.m_dopplerScale, g_cvars.m_distanceFactor, g_cvars.m_rolloffScale);
+	CRY_AUDIO_IMPL_FMOD_ASSERT_OK;
 
 	void* pExtraDriverData = nullptr;
 	int initFlags = FMOD_INIT_NORMAL | FMOD_INIT_VOL0_BECOMES_VIRTUAL;
 	int studioInitFlags = FMOD_STUDIO_INIT_NORMAL;
 
-#if defined(INCLUDE_FMOD_IMPL_PRODUCTION_CODE)
+#if defined(CRY_AUDIO_IMPL_FMOD_USE_DEBUG_CODE)
 	if (g_cvars.m_enableLiveUpdate > 0)
 	{
 		studioInitFlags |= FMOD_STUDIO_INIT_LIVEUPDATE;
 	}
-#endif  // INCLUDE_FMOD_IMPL_PRODUCTION_CODE
+#endif  // CRY_AUDIO_IMPL_FMOD_USE_DEBUG_CODE
 
 	if (g_cvars.m_enableSynchronousUpdate > 0)
 	{
 		studioInitFlags |= FMOD_STUDIO_INIT_SYNCHRONOUS_UPDATE;
 	}
 
-	fmodResult = m_pSystem->initialize(g_cvars.m_maxChannels, studioInitFlags, initFlags, pExtraDriverData);
-	ASSERT_FMOD_OK;
+	fmodResult = g_pSystem->initialize(g_cvars.m_maxChannels, studioInitFlags, initFlags, pExtraDriverData);
+	CRY_AUDIO_IMPL_FMOD_ASSERT_OK;
 
 	LoadMasterBanks();
 
@@ -212,12 +244,8 @@ ERequestStatus CImpl::Init(uint16 const objectPoolSize, uint16 const eventPoolSi
 		{ 0 } };
 	attributes.forward.z = 1.0f;
 	attributes.up.y = 1.0f;
-	fmodResult = m_pSystem->setListenerAttributes(0, &attributes);
-	ASSERT_FMOD_OK;
-
-	CBaseObject::s_pSystem = m_pSystem;
-	CListener::s_pSystem = m_pSystem;
-	CBaseStandaloneFile::s_pLowLevelSystem = m_pLowLevelSystem;
+	fmodResult = g_pSystem->setListenerAttributes(0, &attributes);
+	CRY_AUDIO_IMPL_FMOD_ASSERT_OK;
 
 	return (fmodResult == FMOD_OK) ? ERequestStatus::Success : ERequestStatus::Failure;
 }
@@ -225,12 +253,12 @@ ERequestStatus CImpl::Init(uint16 const objectPoolSize, uint16 const eventPoolSi
 ///////////////////////////////////////////////////////////////////////////
 void CImpl::ShutDown()
 {
-	if (m_pSystem != nullptr)
+	if (g_pSystem != nullptr)
 	{
+		ClearActiveSnapshots();
 		UnloadMasterBanks();
 
-		FMOD_RESULT const fmodResult = m_pSystem->release();
-		ASSERT_FMOD_OK;
+		CRY_VERIFY(g_pSystem->release() == FMOD_OK);
 	}
 }
 
@@ -238,31 +266,22 @@ void CImpl::ShutDown()
 void CImpl::Release()
 {
 	delete this;
+	g_pImpl = nullptr;
 	g_cvars.UnregisterVariables();
 
 	FreeMemoryPools();
 }
 
 //////////////////////////////////////////////////////////////////////////
-void CImpl::SetLibraryData(XmlNodeRef const pNode, bool const isLevelSpecific)
+void CImpl::SetLibraryData(XmlNodeRef const pNode, ContextId const contextId)
 {
-	if (isLevelSpecific)
+	if (contextId == GlobalContextId)
 	{
-		SPoolSizes levelPoolSizes;
-		CountPoolSizes(pNode, levelPoolSizes);
-
-		g_poolSizesLevelSpecific.triggers = std::max(g_poolSizesLevelSpecific.triggers, levelPoolSizes.triggers);
-		g_poolSizesLevelSpecific.parameters = std::max(g_poolSizesLevelSpecific.parameters, levelPoolSizes.parameters);
-		g_poolSizesLevelSpecific.switchStates = std::max(g_poolSizesLevelSpecific.switchStates, levelPoolSizes.switchStates);
-		g_poolSizesLevelSpecific.envBuses = std::max(g_poolSizesLevelSpecific.envBuses, levelPoolSizes.envBuses);
-		g_poolSizesLevelSpecific.envParameters = std::max(g_poolSizesLevelSpecific.envParameters, levelPoolSizes.envParameters);
-		g_poolSizesLevelSpecific.vcaParameters = std::max(g_poolSizesLevelSpecific.vcaParameters, levelPoolSizes.vcaParameters);
-		g_poolSizesLevelSpecific.vcaStates = std::max(g_poolSizesLevelSpecific.vcaStates, levelPoolSizes.vcaStates);
-		g_poolSizesLevelSpecific.files = std::max(g_poolSizesLevelSpecific.files, levelPoolSizes.files);
+		CountPoolSizes(pNode, g_poolSizes);
 	}
 	else
 	{
-		CountPoolSizes(pNode, g_poolSizes);
+		CountPoolSizes(pNode, g_contextPoolSizes[contextId]);
 	}
 }
 
@@ -270,38 +289,80 @@ void CImpl::SetLibraryData(XmlNodeRef const pNode, bool const isLevelSpecific)
 void CImpl::OnBeforeLibraryDataChanged()
 {
 	ZeroStruct(g_poolSizes);
-	ZeroStruct(g_poolSizesLevelSpecific);
+	g_contextPoolSizes.clear();
 
-#if defined(INCLUDE_FMOD_IMPL_PRODUCTION_CODE)
+#if defined(CRY_AUDIO_IMPL_FMOD_USE_DEBUG_CODE)
 	ZeroStruct(g_debugPoolSizes);
-#endif  // INCLUDE_FMOD_IMPL_PRODUCTION_CODE
+#endif  // CRY_AUDIO_IMPL_FMOD_USE_DEBUG_CODE
 }
 
 //////////////////////////////////////////////////////////////////////////
-void CImpl::OnAfterLibraryDataChanged()
+void CImpl::OnAfterLibraryDataChanged(int const poolAllocationMode)
 {
-	g_poolSizes.triggers += g_poolSizesLevelSpecific.triggers;
-	g_poolSizes.parameters += g_poolSizesLevelSpecific.parameters;
-	g_poolSizes.switchStates += g_poolSizesLevelSpecific.switchStates;
-	g_poolSizes.envBuses += g_poolSizesLevelSpecific.envBuses;
-	g_poolSizes.envParameters += g_poolSizesLevelSpecific.envParameters;
-	g_poolSizes.vcaParameters += g_poolSizesLevelSpecific.vcaParameters;
-	g_poolSizes.vcaStates += g_poolSizesLevelSpecific.vcaStates;
-	g_poolSizes.files += g_poolSizesLevelSpecific.files;
+	if (!g_contextPoolSizes.empty())
+	{
+		if (poolAllocationMode <= 0)
+		{
+			for (auto const& poolSizePair : g_contextPoolSizes)
+			{
+				SPoolSizes const& iterPoolSizes = g_contextPoolSizes[poolSizePair.first];
 
-#if defined(INCLUDE_FMOD_IMPL_PRODUCTION_CODE)
+				g_poolSizes.events += iterPoolSizes.events;
+				g_poolSizes.parameters += iterPoolSizes.parameters;
+				g_poolSizes.parameterEnvironments += iterPoolSizes.parameterEnvironments;
+				g_poolSizes.parameterStates += iterPoolSizes.parameterStates;
+				g_poolSizes.snapshots += iterPoolSizes.snapshots;
+				g_poolSizes.returns += iterPoolSizes.returns;
+				g_poolSizes.vcas += iterPoolSizes.vcas;
+				g_poolSizes.vcaStates += iterPoolSizes.vcaStates;
+				g_poolSizes.banks += iterPoolSizes.banks;
+			}
+		}
+		else
+		{
+			SPoolSizes maxContextPoolSizes;
+
+			for (auto const& poolSizePair : g_contextPoolSizes)
+			{
+				SPoolSizes const& iterPoolSizes = g_contextPoolSizes[poolSizePair.first];
+
+				maxContextPoolSizes.events = std::max(maxContextPoolSizes.events, iterPoolSizes.events);
+				maxContextPoolSizes.parameters = std::max(maxContextPoolSizes.parameters, iterPoolSizes.parameters);
+				maxContextPoolSizes.parameterEnvironments = std::max(maxContextPoolSizes.parameterEnvironments, iterPoolSizes.parameterEnvironments);
+				maxContextPoolSizes.parameterStates = std::max(maxContextPoolSizes.parameterStates, iterPoolSizes.parameterStates);
+				maxContextPoolSizes.snapshots = std::max(maxContextPoolSizes.snapshots, iterPoolSizes.snapshots);
+				maxContextPoolSizes.returns = std::max(maxContextPoolSizes.returns, iterPoolSizes.returns);
+				maxContextPoolSizes.vcas = std::max(maxContextPoolSizes.vcas, iterPoolSizes.vcas);
+				maxContextPoolSizes.vcaStates = std::max(maxContextPoolSizes.vcaStates, iterPoolSizes.vcaStates);
+				maxContextPoolSizes.banks = std::max(maxContextPoolSizes.banks, iterPoolSizes.banks);
+			}
+
+			g_poolSizes.events += maxContextPoolSizes.events;
+			g_poolSizes.parameters += maxContextPoolSizes.parameters;
+			g_poolSizes.parameterEnvironments += maxContextPoolSizes.parameterEnvironments;
+			g_poolSizes.parameterStates += maxContextPoolSizes.parameterStates;
+			g_poolSizes.snapshots += maxContextPoolSizes.snapshots;
+			g_poolSizes.returns += maxContextPoolSizes.returns;
+			g_poolSizes.vcas += maxContextPoolSizes.vcas;
+			g_poolSizes.vcaStates += maxContextPoolSizes.vcaStates;
+			g_poolSizes.banks += maxContextPoolSizes.banks;
+		}
+	}
+
+#if defined(CRY_AUDIO_IMPL_FMOD_USE_DEBUG_CODE)
 	// Used to hide pools without allocations in debug draw.
 	g_debugPoolSizes = g_poolSizes;
-#endif  // INCLUDE_FMOD_IMPL_PRODUCTION_CODE
+#endif  // CRY_AUDIO_IMPL_FMOD_USE_DEBUG_CODE
 
-	g_poolSizes.triggers = std::max<uint16>(1, g_poolSizes.triggers);
+	g_poolSizes.events = std::max<uint16>(1, g_poolSizes.events);
 	g_poolSizes.parameters = std::max<uint16>(1, g_poolSizes.parameters);
-	g_poolSizes.switchStates = std::max<uint16>(1, g_poolSizes.switchStates);
-	g_poolSizes.envBuses = std::max<uint16>(1, g_poolSizes.envBuses);
-	g_poolSizes.envParameters = std::max<uint16>(1, g_poolSizes.envParameters);
-	g_poolSizes.vcaParameters = std::max<uint16>(1, g_poolSizes.vcaParameters);
+	g_poolSizes.parameterEnvironments = std::max<uint16>(1, g_poolSizes.parameterEnvironments);
+	g_poolSizes.parameterStates = std::max<uint16>(1, g_poolSizes.parameterStates);
+	g_poolSizes.snapshots = std::max<uint16>(1, g_poolSizes.snapshots);
+	g_poolSizes.returns = std::max<uint16>(1, g_poolSizes.returns);
+	g_poolSizes.vcas = std::max<uint16>(1, g_poolSizes.vcas);
 	g_poolSizes.vcaStates = std::max<uint16>(1, g_poolSizes.vcaStates);
-	g_poolSizes.files = std::max<uint16>(1, g_poolSizes.files);
+	g_poolSizes.banks = std::max<uint16>(1, g_poolSizes.banks);
 }
 
 ///////////////////////////////////////////////////////////////////////////
@@ -345,87 +406,53 @@ ERequestStatus CImpl::StopAllSounds()
 {
 	FMOD::Studio::Bus* pMasterBus = nullptr;
 
-#if defined(INCLUDE_FMOD_IMPL_PRODUCTION_CODE)
-	if (m_pSystem->getBus(s_szBusPrefix, &pMasterBus) != FMOD_OK)
+#if defined(CRY_AUDIO_IMPL_FMOD_USE_DEBUG_CODE)
+	if (g_pSystem->getBus(g_szBusPrefix, &pMasterBus) != FMOD_OK)
 	{
 		Cry::Audio::Log(ELogType::Error, "Failed to get master bus during %s", __FUNCTION__);
 	}
 #else
-	m_pSystem->getBus(s_szBusPrefix, &pMasterBus);
-#endif  // INCLUDE_FMOD_IMPL_PRODUCTION_CODE
+	g_pSystem->getBus(g_szBusPrefix, &pMasterBus);
+#endif  // CRY_AUDIO_IMPL_FMOD_USE_DEBUG_CODE
 
 	if (pMasterBus != nullptr)
 	{
-#if defined(INCLUDE_FMOD_IMPL_PRODUCTION_CODE)
+#if defined(CRY_AUDIO_IMPL_FMOD_USE_DEBUG_CODE)
 		if (pMasterBus->stopAllEvents(FMOD_STUDIO_STOP_IMMEDIATE) != FMOD_OK)
 		{
 			Cry::Audio::Log(ELogType::Error, "Failed to stop all events during %s", __FUNCTION__);
 		}
 #else
 		pMasterBus->stopAllEvents(FMOD_STUDIO_STOP_IMMEDIATE);
-#endif    // INCLUDE_FMOD_IMPL_PRODUCTION_CODE
+#endif    // CRY_AUDIO_IMPL_FMOD_USE_DEBUG_CODE
 	}
 
 	return ERequestStatus::Success;
 }
 
 //////////////////////////////////////////////////////////////////////////
-void CImpl::SetGlobalParameter(IParameterConnection* const pIParameterConnection, float const value)
+void CImpl::RegisterInMemoryFile(SFileInfo* const pFileInfo)
 {
-	if (pIParameterConnection != nullptr)
-	{
-		auto const pParameter = static_cast<CBaseParameter*>(pIParameterConnection);
-
-		for (auto const pObject : g_constructedObjects)
-		{
-			pParameter->Set(pObject, value);
-		}
-	}
-	else
-	{
-		Cry::Audio::Log(ELogType::Error, "Invalid object pointer passed to the Fmod implementation of %s", __FUNCTION__);
-	}
-}
-
-//////////////////////////////////////////////////////////////////////////
-void CImpl::SetGlobalSwitchState(ISwitchStateConnection* const pISwitchStateConnection)
-{
-	if (pISwitchStateConnection != nullptr)
-	{
-		auto const pSwitchState = static_cast<CBaseSwitchState*>(pISwitchStateConnection);
-
-		for (auto const pObject : g_constructedObjects)
-		{
-			pSwitchState->Set(pObject);
-		}
-	}
-	else
-	{
-		Cry::Audio::Log(ELogType::Error, "Invalid switch state pointer passed to the Fmod implementation of %s", __FUNCTION__);
-	}
-}
-
-//////////////////////////////////////////////////////////////////////////
-ERequestStatus CImpl::RegisterInMemoryFile(SFileInfo* const pFileInfo)
-{
-	ERequestStatus requestResult = ERequestStatus::Failure;
-
 	if (pFileInfo != nullptr)
 	{
-		auto const pFileData = static_cast<CFile*>(pFileInfo->pImplData);
+		auto const pFileData = static_cast<CBank*>(pFileInfo->pImplData);
 
 		if (pFileData != nullptr)
 		{
-#if defined(INCLUDE_FMOD_IMPL_PRODUCTION_CODE)
+#if defined(CRY_AUDIO_IMPL_FMOD_USE_DEBUG_CODE)
 			// loadBankMemory requires 32-byte alignment when using FMOD_STUDIO_LOAD_MEMORY_POINT
 			if ((reinterpret_cast<uintptr_t>(pFileInfo->pFileData) & (32 - 1)) > 0)
 			{
 				CryFatalError("<Audio>: allocation not %d byte aligned!", 32);
 			}
-#endif      // INCLUDE_FMOD_IMPL_PRODUCTION_CODE
+#endif      // CRY_AUDIO_IMPL_FMOD_USE_DEBUG_CODE
 
-			FMOD_RESULT fmodResult = m_pSystem->loadBankMemory(static_cast<char*>(pFileInfo->pFileData), static_cast<int>(pFileInfo->size), FMOD_STUDIO_LOAD_MEMORY_POINT, FMOD_STUDIO_LOAD_BANK_NORMAL, &pFileData->pBank);
-			ASSERT_FMOD_OK;
+			CRY_VERIFY(g_pSystem->loadBankMemory(
+									 static_cast<char*>(pFileInfo->pFileData),
+									 static_cast<int>(pFileInfo->size),
+									 FMOD_STUDIO_LOAD_MEMORY_POINT,
+									 FMOD_STUDIO_LOAD_BANK_NORMAL,
+									 &pFileData->pBank) == FMOD_OK);
 
 			CryFixedStringT<MaxFilePathLength> streamsBankPath = pFileInfo->szFilePath;
 			PathUtil::RemoveExtension(streamsBankPath);
@@ -436,43 +463,36 @@ ERequestStatus CImpl::RegisterInMemoryFile(SFileInfo* const pFileInfo)
 			if (streamsBankFileSize > 0)
 			{
 				pFileData->m_streamsBankPath = streamsBankPath;
-				fmodResult = LoadBankCustom(pFileData->m_streamsBankPath.c_str(), &pFileData->pStreamsBank);
-				ASSERT_FMOD_OK;
+				CRY_VERIFY(LoadBankCustom(pFileData->m_streamsBankPath.c_str(), &pFileData->pStreamsBank) == FMOD_OK);
 			}
-
-			requestResult = (fmodResult == FMOD_OK) ? ERequestStatus::Success : ERequestStatus::Failure;
 		}
+#if defined(CRY_AUDIO_IMPL_FMOD_USE_DEBUG_CODE)
 		else
 		{
-			Cry::Audio::Log(ELogType::Error, "Invalid FileData passed to the Fmod implementation of RegisterInMemoryFile");
+			Cry::Audio::Log(ELogType::Error, "Invalid FileData passed to the Fmod implementation of %s", __FUNCTION__);
 		}
+#endif    // CRY_AUDIO_IMPL_FMOD_USE_DEBUG_CODE
 	}
-
-	return requestResult;
 }
 
 //////////////////////////////////////////////////////////////////////////
-ERequestStatus CImpl::UnregisterInMemoryFile(SFileInfo* const pFileInfo)
+void CImpl::UnregisterInMemoryFile(SFileInfo* const pFileInfo)
 {
-	ERequestStatus requestResult = ERequestStatus::Failure;
-
 	if (pFileInfo != nullptr)
 	{
-		auto const pFileData = static_cast<CFile*>(pFileInfo->pImplData);
+		auto const pFileData = static_cast<CBank*>(pFileInfo->pImplData);
 
 		if (pFileData != nullptr)
 		{
-			FMOD_RESULT fmodResult = pFileData->pBank->unload();
-			ASSERT_FMOD_OK;
+			CRY_VERIFY(pFileData->pBank->unload() == FMOD_OK);
 
 			FMOD_STUDIO_LOADING_STATE loadingState;
 
 			do
 			{
-				fmodResult = m_pSystem->update();
-				ASSERT_FMOD_OK;
-				fmodResult = pFileData->pBank->getLoadingState(&loadingState);
-				ASSERT_FMOD_OK_OR_INVALID_HANDLE;
+				CRY_VERIFY(g_pSystem->update() == FMOD_OK);
+				FMOD_RESULT const fmodResult = pFileData->pBank->getLoadingState(&loadingState);
+				CRY_AUDIO_IMPL_FMOD_ASSERT_OK_OR_INVALID_HANDLE;
 			}
 			while (loadingState == FMOD_STUDIO_LOADING_STATE_UNLOADING);
 
@@ -480,20 +500,17 @@ ERequestStatus CImpl::UnregisterInMemoryFile(SFileInfo* const pFileInfo)
 
 			if (pFileData->pStreamsBank != nullptr)
 			{
-				fmodResult = pFileData->pStreamsBank->unload();
-				ASSERT_FMOD_OK;
+				CRY_VERIFY(pFileData->pStreamsBank->unload() == FMOD_OK);
 				pFileData->pStreamsBank = nullptr;
 			}
-
-			requestResult = (fmodResult == FMOD_OK) ? ERequestStatus::Success : ERequestStatus::Failure;
 		}
+#if defined(CRY_AUDIO_IMPL_FMOD_USE_DEBUG_CODE)
 		else
 		{
-			Cry::Audio::Log(ELogType::Error, "Invalid FileData passed to the Fmod implementation of UnregisterInMemoryFile");
+			Cry::Audio::Log(ELogType::Error, "Invalid FileData passed to the Fmod implementation of %s", __FUNCTION__);
 		}
+#endif    // CRY_AUDIO_IMPL_FMOD_USE_DEBUG_CODE
 	}
-
-	return requestResult;
 }
 
 //////////////////////////////////////////////////////////////////////////
@@ -501,21 +518,21 @@ ERequestStatus CImpl::ConstructFile(XmlNodeRef const pRootNode, SFileInfo* const
 {
 	ERequestStatus result = ERequestStatus::Failure;
 
-	if ((_stricmp(pRootNode->getTag(), s_szFileTag) == 0) && (pFileInfo != nullptr))
+	if ((_stricmp(pRootNode->getTag(), g_szFileTag) == 0) && (pFileInfo != nullptr))
 	{
-		char const* const szFileName = pRootNode->getAttr(s_szNameAttribute);
+		char const* const szFileName = pRootNode->getAttr(g_szNameAttribute);
 
 		if (szFileName != nullptr && szFileName[0] != '\0')
 		{
-			char const* const szLocalized = pRootNode->getAttr(s_szLocalizedAttribute);
-			pFileInfo->bLocalized = (szLocalized != nullptr) && (_stricmp(szLocalized, s_szTrueValue) == 0);
+			char const* const szLocalized = pRootNode->getAttr(g_szLocalizedAttribute);
+			pFileInfo->bLocalized = (szLocalized != nullptr) && (_stricmp(szLocalized, g_szTrueValue) == 0);
 			pFileInfo->szFileName = szFileName;
 
 			// FMOD Studio always uses 32 byte alignment for preloaded banks regardless of the platform.
 			pFileInfo->memoryBlockAlignment = 32;
 
 			MEMSTAT_CONTEXT(EMemStatContextTypes::MSC_AudioImpl, 0, "CryAudio::Impl::Fmod::CFile");
-			pFileInfo->pImplData = new CFile();
+			pFileInfo->pImplData = new CBank();
 
 			result = ERequestStatus::Success;
 		}
@@ -552,12 +569,12 @@ char const* const CImpl::GetFileLocation(SFileInfo* const pFileInfo)
 //////////////////////////////////////////////////////////////////////////
 void CImpl::GetInfo(SImplInfo& implInfo) const
 {
-#if defined(INCLUDE_FMOD_IMPL_PRODUCTION_CODE)
+#if defined(CRY_AUDIO_IMPL_FMOD_USE_DEBUG_CODE)
 	implInfo.name = m_name.c_str();
 #else
 	implInfo.name = "name-not-present-in-release-mode";
-#endif  // INCLUDE_FMOD_IMPL_PRODUCTION_CODE
-	implInfo.folderName = s_szImplFolderName;
+#endif  // CRY_AUDIO_IMPL_FMOD_USE_DEBUG_CODE
+	implInfo.folderName = g_szImplFolderName;
 }
 
 ///////////////////////////////////////////////////////////////////////////
@@ -568,7 +585,9 @@ IObject* CImpl::ConstructGlobalObject()
 
 	if (!stl::push_back_unique(g_constructedObjects, static_cast<CBaseObject*>(g_pObject)))
 	{
+#if defined(CRY_AUDIO_IMPL_FMOD_USE_DEBUG_CODE)
 		Cry::Audio::Log(ELogType::Warning, "Trying to construct an already registered object.");
+#endif    // CRY_AUDIO_IMPL_FMOD_USE_DEBUG_CODE
 	}
 
 	return static_cast<IObject*>(g_pObject);
@@ -580,10 +599,19 @@ IObject* CImpl::ConstructObject(CTransformation const& transformation, char cons
 	MEMSTAT_CONTEXT(EMemStatContextTypes::MSC_AudioImpl, 0, "CryAudio::Impl::Fmod::CObject");
 	CBaseObject* const pObject = new CObject(transformation);
 
+#if defined(CRY_AUDIO_IMPL_FMOD_USE_DEBUG_CODE)
+	if (szName != nullptr)
+	{
+		pObject->SetName(szName);
+	}
+
 	if (!stl::push_back_unique(g_constructedObjects, pObject))
 	{
 		Cry::Audio::Log(ELogType::Warning, "Trying to construct an already registered object.");
 	}
+#else
+	stl::push_back_unique(g_constructedObjects, pObject);
+#endif  // CRY_AUDIO_IMPL_FMOD_USE_DEBUG_CODE
 
 	return static_cast<IObject*>(pObject);
 }
@@ -591,14 +619,16 @@ IObject* CImpl::ConstructObject(CTransformation const& transformation, char cons
 ///////////////////////////////////////////////////////////////////////////
 void CImpl::DestructObject(IObject const* const pIObject)
 {
-	auto const pObject = static_cast<CBaseObject const*>(pIObject);
+	auto const pBaseObject = static_cast<CBaseObject const*>(pIObject);
 
-	if (!stl::find_and_erase(g_constructedObjects, pObject))
+	if (!stl::find_and_erase(g_constructedObjects, pBaseObject))
 	{
+#if defined(CRY_AUDIO_IMPL_FMOD_USE_DEBUG_CODE)
 		Cry::Audio::Log(ELogType::Warning, "Trying to delete a non-existing object.");
+#endif    // CRY_AUDIO_IMPL_FMOD_USE_DEBUG_CODE
 	}
 
-	delete pObject;
+	delete pBaseObject;
 }
 
 ///////////////////////////////////////////////////////////////////////////
@@ -609,12 +639,12 @@ IListener* CImpl::ConstructListener(CTransformation const& transformation, char 
 	MEMSTAT_CONTEXT(EMemStatContextTypes::MSC_AudioImpl, 0, "CryAudio::Impl::Fmod::CListener");
 	g_pListener = new CListener(transformation, id++);
 
-#if defined(INCLUDE_FMOD_IMPL_PRODUCTION_CODE)
+#if defined(CRY_AUDIO_IMPL_FMOD_USE_DEBUG_CODE)
 	if (szName != nullptr)
 	{
 		g_pListener->SetName(szName);
 	}
-#endif  // INCLUDE_FMOD_IMPL_PRODUCTION_CODE
+#endif  // CRY_AUDIO_IMPL_FMOD_USE_DEBUG_CODE
 
 	return static_cast<IListener*>(g_pListener);
 }
@@ -625,57 +655,6 @@ void CImpl::DestructListener(IListener* const pIListener)
 	CRY_ASSERT_MESSAGE(pIListener == g_pListener, "pIListener is not g_pListener during %s", __FUNCTION__);
 	delete g_pListener;
 	g_pListener = nullptr;
-}
-
-//////////////////////////////////////////////////////////////////////////
-IEvent* CImpl::ConstructEvent(CryAudio::CEvent& event)
-{
-	MEMSTAT_CONTEXT(EMemStatContextTypes::MSC_AudioImpl, 0, "CryAudio::Impl::Fmod::CEvent");
-	return static_cast<IEvent*>(new CEvent(&event));
-}
-
-///////////////////////////////////////////////////////////////////////////
-void CImpl::DestructEvent(IEvent const* const pIEvent)
-{
-	CRY_ASSERT_MESSAGE(pIEvent != nullptr, "pIEvent is nullptr during %s", __FUNCTION__);
-	delete pIEvent;
-}
-
-//////////////////////////////////////////////////////////////////////////
-IStandaloneFileConnection* CImpl::ConstructStandaloneFileConnection(CryAudio::CStandaloneFile& standaloneFile, char const* const szFile, bool const bLocalized, ITriggerConnection const* pITriggerConnection /*= nullptr*/)
-{
-	string filePath;
-
-	if (bLocalized)
-	{
-		filePath = string(m_localizedSoundBankFolder + "/" + szFile) + ".mp3";
-	}
-	else
-	{
-		filePath = string(szFile) + ".mp3";
-	}
-
-	CBaseStandaloneFile* pFile = nullptr;
-
-	if (pITriggerConnection != nullptr)
-	{
-		MEMSTAT_CONTEXT(EMemStatContextTypes::MSC_AudioImpl, 0, "CryAudio::Impl::Fmod::CProgrammerSoundFile");
-		pFile = new CProgrammerSoundFile(filePath, static_cast<CTrigger const* const>(pITriggerConnection)->GetGuid(), standaloneFile);
-	}
-	else
-	{
-		MEMSTAT_CONTEXT(EMemStatContextTypes::MSC_AudioImpl, 0, "CryAudio::Impl::Fmod::CStandaloneFile");
-		pFile = new CStandaloneFile(filePath, standaloneFile);
-	}
-
-	return static_cast<IStandaloneFileConnection*>(pFile);
-}
-
-//////////////////////////////////////////////////////////////////////////
-void CImpl::DestructStandaloneFileConnection(IStandaloneFileConnection const* const pIStandaloneFileConnection)
-{
-	CRY_ASSERT_MESSAGE(pIStandaloneFileConnection != nullptr, "pIStandaloneFileConnection is nullptr during %s", __FUNCTION__);
-	delete pIStandaloneFileConnection;
 }
 
 //////////////////////////////////////////////////////////////////////////
@@ -691,114 +670,149 @@ void CImpl::GamepadDisconnected(DeviceId const deviceUniqueID)
 ///////////////////////////////////////////////////////////////////////////
 ITriggerConnection* CImpl::ConstructTriggerConnection(XmlNodeRef const pRootNode, float& radius)
 {
-	CTrigger* pTrigger = nullptr;
+	ITriggerConnection* pITriggerConnection = nullptr;
+
 	char const* const szTag = pRootNode->getTag();
 
-	if (_stricmp(szTag, s_szEventTag) == 0)
+	if (_stricmp(szTag, g_szEventTag) == 0)
 	{
-		stack_string path(s_szEventPrefix);
-		path += pRootNode->getAttr(s_szNameAttribute);
+		stack_string path(g_szEventPrefix);
+		char const* const szName = pRootNode->getAttr(g_szNameAttribute);
+		path += szName;
 		FMOD_GUID guid = { 0 };
 
-		if (m_pSystem->lookupID(path.c_str(), &guid) == FMOD_OK)
+		if (g_pSystem->lookupID(path.c_str(), &guid) == FMOD_OK)
 		{
-			EEventType eventType = EEventType::Start;
-			char const* const szEventType = pRootNode->getAttr(s_szTypeAttribute);
+			FMOD::Studio::EventDescription* pEventDescription = nullptr;
+			g_pSystem->getEventByID(&guid, &pEventDescription);
+
+			CEvent::EActionType actionType = CEvent::EActionType::Start;
+			char const* const szEventType = pRootNode->getAttr(g_szTypeAttribute);
 
 			if ((szEventType != nullptr) && (szEventType[0] != '\0'))
 			{
-				if (_stricmp(szEventType, s_szStopValue) == 0)
+				if (_stricmp(szEventType, g_szStopValue) == 0)
 				{
-					eventType = EEventType::Stop;
+					actionType = CEvent::EActionType::Stop;
 				}
-				else if (_stricmp(szEventType, s_szPauseValue) == 0)
+				else if (_stricmp(szEventType, g_szPauseValue) == 0)
 				{
-					eventType = EEventType::Pause;
+					actionType = CEvent::EActionType::Pause;
 				}
-				else if (_stricmp(szEventType, s_szResumeValue) == 0)
+				else if (_stricmp(szEventType, g_szResumeValue) == 0)
 				{
-					eventType = EEventType::Resume;
+					actionType = CEvent::EActionType::Resume;
 				}
 			}
 
-			MEMSTAT_CONTEXT(EMemStatContextTypes::MSC_AudioImpl, 0, "CryAudio::Impl::Fmod::CTrigger");
-			pTrigger = new CTrigger(StringToId(path.c_str()), eventType, nullptr, guid);
+			MEMSTAT_CONTEXT(EMemStatContextTypes::MSC_AudioImpl, 0, "CryAudio::Impl::Fmod::CEvent");
+
+#if defined(CRY_AUDIO_IMPL_FMOD_USE_DEBUG_CODE)
+			pITriggerConnection = static_cast<ITriggerConnection*>(new CEvent(StringToId(path.c_str()), actionType, guid, szName));
+#else
+			pITriggerConnection = static_cast<ITriggerConnection*>(new CEvent(StringToId(path.c_str()), actionType, guid));
+#endif      // CRY_AUDIO_IMPL_FMOD_USE_DEBUG_CODE
 		}
+#if defined(CRY_AUDIO_IMPL_FMOD_USE_DEBUG_CODE)
 		else
 		{
 			Cry::Audio::Log(ELogType::Warning, "Unknown Fmod event: %s", path.c_str());
 		}
+#endif      // CRY_AUDIO_IMPL_FMOD_USE_DEBUG_CODE
 	}
-	else if (_stricmp(szTag, s_szKeyTag) == 0)
+	else if (_stricmp(szTag, g_szKeyTag) == 0)
 	{
-		stack_string path(s_szEventPrefix);
-		path += pRootNode->getAttr(s_szEventAttribute);
+		stack_string path(g_szEventPrefix);
+		char const* const szEventName = pRootNode->getAttr(g_szEventAttribute);
+		path += szEventName;
 		FMOD_GUID guid = { 0 };
 
-		if (m_pSystem->lookupID(path.c_str(), &guid) == FMOD_OK)
+		if (g_pSystem->lookupID(path.c_str(), &guid) == FMOD_OK)
 		{
-			char const* const szKey = pRootNode->getAttr(s_szNameAttribute);
+			char const* const szKey = pRootNode->getAttr(g_szNameAttribute);
 
-			MEMSTAT_CONTEXT(EMemStatContextTypes::MSC_AudioImpl, 0, "CryAudio::Impl::Fmod::CTrigger");
-			pTrigger = new CTrigger(StringToId(path.c_str()), EEventType::Start, nullptr, guid, true, szKey);
+			FMOD::Studio::EventDescription* pEventDescription = nullptr;
+			g_pSystem->getEventByID(&guid, &pEventDescription);
+
+			MEMSTAT_CONTEXT(EMemStatContextTypes::MSC_AudioImpl, 0, "CryAudio::Impl::Fmod::CEvent");
+
+#if defined(CRY_AUDIO_IMPL_FMOD_USE_DEBUG_CODE)
+			pITriggerConnection = static_cast<ITriggerConnection*>(new CEvent(StringToId(path.c_str()), guid, szKey, szEventName));
+#else
+			pITriggerConnection = static_cast<ITriggerConnection*>(new CEvent(StringToId(path.c_str()), guid, szKey));
+#endif      // CRY_AUDIO_IMPL_FMOD_USE_DEBUG_CODE
 		}
+#if defined(CRY_AUDIO_IMPL_FMOD_USE_DEBUG_CODE)
 		else
 		{
 			Cry::Audio::Log(ELogType::Warning, "Unknown Fmod event: %s", path.c_str());
 		}
+#endif      // CRY_AUDIO_IMPL_FMOD_USE_DEBUG_CODE
 	}
-	else if (_stricmp(szTag, s_szSnapshotTag) == 0)
+	else if (_stricmp(szTag, g_szSnapshotTag) == 0)
 	{
-		stack_string path(s_szSnapshotPrefix);
-		path += pRootNode->getAttr(s_szNameAttribute);
+		stack_string path(g_szSnapshotPrefix);
+		char const* const szName = pRootNode->getAttr(g_szNameAttribute);
+		path += szName;
 		FMOD_GUID guid = { 0 };
 
-		if (m_pSystem->lookupID(path.c_str(), &guid) == FMOD_OK)
+		if (g_pSystem->lookupID(path.c_str(), &guid) == FMOD_OK)
 		{
-			EEventType eventType = EEventType::Start;
-			char const* const szFmodEventType = pRootNode->getAttr(s_szTypeAttribute);
+			CSnapshot::EActionType actionType = CSnapshot::EActionType::Start;
+			char const* const szActionType = pRootNode->getAttr(g_szTypeAttribute);
 
-			if ((szFmodEventType != nullptr) && (szFmodEventType[0] != '\0') && (_stricmp(szFmodEventType, s_szStopValue) == 0))
+			if ((szActionType != nullptr) && (szActionType[0] != '\0') && (_stricmp(szActionType, g_szStopValue) == 0))
 			{
-				eventType = EEventType::Stop;
+				actionType = CSnapshot::EActionType::Stop;
 			}
 
 			FMOD::Studio::EventDescription* pEventDescription = nullptr;
-			m_pSystem->getEventByID(&guid, &pEventDescription);
+			g_pSystem->getEventByID(&guid, &pEventDescription);
 
-			MEMSTAT_CONTEXT(EMemStatContextTypes::MSC_AudioImpl, 0, "CryAudio::Impl::Fmod::CTrigger");
-			pTrigger = new CTrigger(StringToId(path.c_str()), eventType, pEventDescription, guid);
+			MEMSTAT_CONTEXT(EMemStatContextTypes::MSC_AudioImpl, 0, "CryAudio::Impl::Fmod::CSnapshot");
+
+#if defined(CRY_AUDIO_IMPL_FMOD_USE_DEBUG_CODE)
+			pITriggerConnection = static_cast<ITriggerConnection*>(new CSnapshot(StringToId(path.c_str()), actionType, pEventDescription, szName));
+#else
+			pITriggerConnection = static_cast<ITriggerConnection*>(new CSnapshot(StringToId(path.c_str()), actionType, pEventDescription));
+#endif      // CRY_AUDIO_IMPL_FMOD_USE_DEBUG_CODE
 		}
+#if defined(CRY_AUDIO_IMPL_FMOD_USE_DEBUG_CODE)
 		else
 		{
 			Cry::Audio::Log(ELogType::Warning, "Unknown Fmod snapshot: %s", path.c_str());
 		}
+#endif      // CRY_AUDIO_IMPL_FMOD_USE_DEBUG_CODE
 	}
+#if defined(CRY_AUDIO_IMPL_FMOD_USE_DEBUG_CODE)
 	else
 	{
 		Cry::Audio::Log(ELogType::Warning, "Unknown Fmod tag: %s", szTag);
 	}
+#endif      // CRY_AUDIO_IMPL_FMOD_USE_DEBUG_CODE
 
-	return static_cast<ITriggerConnection*>(pTrigger);
+	return pITriggerConnection;
 }
 
 //////////////////////////////////////////////////////////////////////////
 ITriggerConnection* CImpl::ConstructTriggerConnection(ITriggerInfo const* const pITriggerInfo)
 {
-#if defined(INCLUDE_FMOD_IMPL_PRODUCTION_CODE)
+#if defined(CRY_AUDIO_IMPL_FMOD_USE_DEBUG_CODE)
 	ITriggerConnection* pITriggerConnection = nullptr;
+
 	auto const pTriggerInfo = static_cast<STriggerInfo const*>(pITriggerInfo);
 
 	if (pTriggerInfo != nullptr)
 	{
-		stack_string path(s_szEventPrefix);
-		path += pTriggerInfo->name.c_str();
+		stack_string path(g_szEventPrefix);
+		char const* const szName = pTriggerInfo->name.c_str();
+		path += szName;
 		FMOD_GUID guid = { 0 };
 
-		if (m_pSystem->lookupID(path.c_str(), &guid) == FMOD_OK)
+		if (g_pSystem->lookupID(path.c_str(), &guid) == FMOD_OK)
 		{
-			MEMSTAT_CONTEXT(EMemStatContextTypes::MSC_AudioImpl, 0, "CryAudio::Impl::Fmod::CTrigger");
-			pITriggerConnection = static_cast<ITriggerConnection*>(new CTrigger(StringToId(path.c_str()), EEventType::Start, nullptr, guid));
+			MEMSTAT_CONTEXT(EMemStatContextTypes::MSC_AudioImpl, 0, "CryAudio::Impl::Fmod::CEvent");
+			pITriggerConnection = static_cast<ITriggerConnection*>(new CEvent(StringToId(path.c_str()), CEvent::EActionType::Start, guid, szName));
 		}
 		else
 		{
@@ -809,64 +823,91 @@ ITriggerConnection* CImpl::ConstructTriggerConnection(ITriggerInfo const* const 
 	return pITriggerConnection;
 #else
 	return nullptr;
-#endif  // INCLUDE_FMOD_IMPL_PRODUCTION_CODE
+#endif  // CRY_AUDIO_IMPL_FMOD_USE_DEBUG_CODE
 }
 
 ///////////////////////////////////////////////////////////////////////////
 void CImpl::DestructTriggerConnection(ITriggerConnection const* const pITriggerConnection)
 {
-	auto const pTrigger = static_cast<CTrigger const*>(pITriggerConnection);
-	g_triggerToParameterIndexes.erase(pTrigger);
-	delete pTrigger;
+	auto const pBaseTriggerConnection = static_cast<CBaseTriggerConnection const*>(pITriggerConnection);
+
+	if (pBaseTriggerConnection->GetType() == CBaseTriggerConnection::EType::Event)
+	{
+		auto const pEvent = static_cast<CEvent const*>(pBaseTriggerConnection);
+		pEvent->SetToBeDestructed();
+
+		if (pEvent->CanBeDestructed())
+		{
+			delete pEvent;
+		}
+	}
+	else
+	{
+		delete pBaseTriggerConnection;
+	}
 }
 
 ///////////////////////////////////////////////////////////////////////////
 IParameterConnection* CImpl::ConstructParameterConnection(XmlNodeRef const pRootNode)
 {
 	IParameterConnection* pIParameterConnection = nullptr;
+
 	char const* const szTag = pRootNode->getTag();
 
-	if (_stricmp(szTag, s_szParameterTag) == 0)
+	if (_stricmp(szTag, g_szParameterTag) == 0)
 	{
-		char const* const szName = pRootNode->getAttr(s_szNameAttribute);
-		float multiplier = s_defaultParamMultiplier;
-		float shift = s_defaultParamShift;
-		pRootNode->getAttr(s_szMutiplierAttribute, multiplier);
-		pRootNode->getAttr(s_szShiftAttribute, shift);
+		char const* const szName = pRootNode->getAttr(g_szNameAttribute);
+		float multiplier = g_defaultParamMultiplier;
+		float shift = g_defaultParamShift;
+		pRootNode->getAttr(g_szMutiplierAttribute, multiplier);
+		pRootNode->getAttr(g_szShiftAttribute, shift);
 
 		MEMSTAT_CONTEXT(EMemStatContextTypes::MSC_AudioImpl, 0, "CryAudio::Impl::Fmod::CParameter");
+
+#if defined(CRY_AUDIO_IMPL_FMOD_USE_DEBUG_CODE)
+		pIParameterConnection = static_cast<IParameterConnection*>(new CParameter(StringToId(szName), multiplier, shift, szName));
+#else
 		pIParameterConnection = static_cast<IParameterConnection*>(new CParameter(StringToId(szName), multiplier, shift));
+#endif    // CRY_AUDIO_IMPL_FMOD_USE_DEBUG_CODE
 	}
-	else if (_stricmp(szTag, s_szVcaTag) == 0)
+	else if (_stricmp(szTag, g_szVcaTag) == 0)
 	{
-		stack_string fullName(s_szVcaPrefix);
-		char const* const szName = pRootNode->getAttr(s_szNameAttribute);
+		stack_string fullName(g_szVcaPrefix);
+		char const* const szName = pRootNode->getAttr(g_szNameAttribute);
 		fullName += szName;
 		FMOD_GUID guid = { 0 };
 
-		if (m_pSystem->lookupID(fullName.c_str(), &guid) == FMOD_OK)
+		if (g_pSystem->lookupID(fullName.c_str(), &guid) == FMOD_OK)
 		{
 			FMOD::Studio::VCA* pVca = nullptr;
-			FMOD_RESULT const fmodResult = m_pSystem->getVCAByID(&guid, &pVca);
-			ASSERT_FMOD_OK;
+			CRY_VERIFY(g_pSystem->getVCAByID(&guid, &pVca) == FMOD_OK);
 
-			float multiplier = s_defaultParamMultiplier;
-			float shift = s_defaultParamShift;
-			pRootNode->getAttr(s_szMutiplierAttribute, multiplier);
-			pRootNode->getAttr(s_szShiftAttribute, shift);
+			float multiplier = g_defaultParamMultiplier;
+			float shift = g_defaultParamShift;
+			pRootNode->getAttr(g_szMutiplierAttribute, multiplier);
+			pRootNode->getAttr(g_szShiftAttribute, shift);
 
-			MEMSTAT_CONTEXT(EMemStatContextTypes::MSC_AudioImpl, 0, "CryAudio::Impl::Fmod::CVcaParameter");
-			pIParameterConnection = static_cast<IParameterConnection*>(new CVcaParameter(StringToId(fullName.c_str()), multiplier, shift, pVca));
+			MEMSTAT_CONTEXT(EMemStatContextTypes::MSC_AudioImpl, 0, "CryAudio::Impl::Fmod::CVca");
+
+#if defined(CRY_AUDIO_IMPL_FMOD_USE_DEBUG_CODE)
+			pIParameterConnection = static_cast<IParameterConnection*>(new CVca(pVca, multiplier, shift, szName));
+#else
+			pIParameterConnection = static_cast<IParameterConnection*>(new CVca(pVca, multiplier, shift));
+#endif      // CRY_AUDIO_IMPL_FMOD_USE_DEBUG_CODE
 		}
+#if defined(CRY_AUDIO_IMPL_FMOD_USE_DEBUG_CODE)
 		else
 		{
 			Cry::Audio::Log(ELogType::Warning, "Unknown Fmod VCA: %s", fullName.c_str());
 		}
+#endif      // CRY_AUDIO_IMPL_FMOD_USE_DEBUG_CODE
 	}
+#if defined(CRY_AUDIO_IMPL_FMOD_USE_DEBUG_CODE)
 	else
 	{
 		Cry::Audio::Log(ELogType::Warning, "Unknown Fmod tag: %s", szTag);
 	}
+#endif      // CRY_AUDIO_IMPL_FMOD_USE_DEBUG_CODE
 
 	return pIParameterConnection;
 }
@@ -874,59 +915,66 @@ IParameterConnection* CImpl::ConstructParameterConnection(XmlNodeRef const pRoot
 ///////////////////////////////////////////////////////////////////////////
 void CImpl::DestructParameterConnection(IParameterConnection const* const pIParameterConnection)
 {
-	auto const pParameter = static_cast<CBaseParameter const*>(pIParameterConnection);
-
-	for (auto const pObject : g_constructedObjects)
-	{
-		pObject->RemoveParameter(pParameter);
-	}
-
-	delete pParameter;
+	delete pIParameterConnection;
 }
 
 ///////////////////////////////////////////////////////////////////////////
 ISwitchStateConnection* CImpl::ConstructSwitchStateConnection(XmlNodeRef const pRootNode)
 {
 	ISwitchStateConnection* pISwitchStateConnection = nullptr;
+
 	char const* const szTag = pRootNode->getTag();
 
-	if (_stricmp(szTag, s_szParameterTag) == 0)
+	if (_stricmp(szTag, g_szParameterTag) == 0)
 	{
-		char const* const szName = pRootNode->getAttr(s_szNameAttribute);
-		char const* const szValue = pRootNode->getAttr(s_szValueAttribute);
-		float const value = static_cast<float>(atof(szValue));
+		char const* const szName = pRootNode->getAttr(g_szNameAttribute);
+		char const* const szValue = pRootNode->getAttr(g_szValueAttribute);
+		auto const value = static_cast<float>(atof(szValue));
 
-		MEMSTAT_CONTEXT(EMemStatContextTypes::MSC_AudioImpl, 0, "CryAudio::Impl::Fmod::CSwitchState");
-		pISwitchStateConnection = static_cast<ISwitchStateConnection*>(new CSwitchState(StringToId(szName), value));
+		MEMSTAT_CONTEXT(EMemStatContextTypes::MSC_AudioImpl, 0, "CryAudio::Impl::Fmod::CParameterState");
+
+#if defined(CRY_AUDIO_IMPL_FMOD_USE_DEBUG_CODE)
+		pISwitchStateConnection = static_cast<ISwitchStateConnection*>(new CParameterState(StringToId(szName), value, szName));
+#else
+		pISwitchStateConnection = static_cast<ISwitchStateConnection*>(new CParameterState(StringToId(szName), value));
+#endif    // CRY_AUDIO_IMPL_FMOD_USE_DEBUG_CODE
 	}
-	else if (_stricmp(szTag, s_szVcaTag) == 0)
+	else if (_stricmp(szTag, g_szVcaTag) == 0)
 	{
-		stack_string fullName(s_szVcaPrefix);
-		char const* const szName = pRootNode->getAttr(s_szNameAttribute);
+		stack_string fullName(g_szVcaPrefix);
+		char const* const szName = pRootNode->getAttr(g_szNameAttribute);
 		fullName += szName;
 		FMOD_GUID guid = { 0 };
 
-		if (m_pSystem->lookupID(fullName.c_str(), &guid) == FMOD_OK)
+		if (g_pSystem->lookupID(fullName.c_str(), &guid) == FMOD_OK)
 		{
 			FMOD::Studio::VCA* pVca = nullptr;
-			FMOD_RESULT const fmodResult = m_pSystem->getVCAByID(&guid, &pVca);
-			ASSERT_FMOD_OK;
+			CRY_VERIFY(g_pSystem->getVCAByID(&guid, &pVca) == FMOD_OK);
 
-			char const* const szValue = pRootNode->getAttr(s_szValueAttribute);
-			float const value = static_cast<float>(atof(szValue));
+			char const* const szValue = pRootNode->getAttr(g_szValueAttribute);
+			auto const value = static_cast<float>(atof(szValue));
 
 			MEMSTAT_CONTEXT(EMemStatContextTypes::MSC_AudioImpl, 0, "CryAudio::Impl::Fmod::CVcaState");
-			pISwitchStateConnection = static_cast<ISwitchStateConnection*>(new CVcaState(StringToId(fullName.c_str()), value, pVca));
+
+#if defined(CRY_AUDIO_IMPL_FMOD_USE_DEBUG_CODE)
+			pISwitchStateConnection = static_cast<ISwitchStateConnection*>(new CVcaState(pVca, value, szName));
+#else
+			pISwitchStateConnection = static_cast<ISwitchStateConnection*>(new CVcaState(pVca, value));
+#endif      // CRY_AUDIO_IMPL_FMOD_USE_DEBUG_CODE
 		}
+#if defined(CRY_AUDIO_IMPL_FMOD_USE_DEBUG_CODE)
 		else
 		{
 			Cry::Audio::Log(ELogType::Warning, "Unknown Fmod VCA: %s", fullName.c_str());
 		}
+#endif      // CRY_AUDIO_IMPL_FMOD_USE_DEBUG_CODE
 	}
+#if defined(CRY_AUDIO_IMPL_FMOD_USE_DEBUG_CODE)
 	else
 	{
 		Cry::Audio::Log(ELogType::Warning, "Unknown Fmod tag: %s", szTag);
 	}
+#endif      // CRY_AUDIO_IMPL_FMOD_USE_DEBUG_CODE
 
 	return pISwitchStateConnection;
 }
@@ -934,80 +982,80 @@ ISwitchStateConnection* CImpl::ConstructSwitchStateConnection(XmlNodeRef const p
 ///////////////////////////////////////////////////////////////////////////
 void CImpl::DestructSwitchStateConnection(ISwitchStateConnection const* const pISwitchStateConnection)
 {
-	auto const pSwitchState = static_cast<CBaseSwitchState const*>(pISwitchStateConnection);
-
-	for (auto const pObject : g_constructedObjects)
-	{
-		pObject->RemoveSwitch(pSwitchState);
-	}
-
-	delete pSwitchState;
+	delete pISwitchStateConnection;
 }
 
 ///////////////////////////////////////////////////////////////////////////
 IEnvironmentConnection* CImpl::ConstructEnvironmentConnection(XmlNodeRef const pRootNode)
 {
-	CEnvironment* pEnvironment = nullptr;
+	IEnvironmentConnection* pIEnvironmentConnection = nullptr;
+
 	char const* const szTag = pRootNode->getTag();
 
-	if (_stricmp(szTag, s_szBusTag) == 0)
+	if (_stricmp(szTag, g_szBusTag) == 0)
 	{
-		stack_string path(s_szBusPrefix);
-		path += pRootNode->getAttr(s_szNameAttribute);
+		stack_string path(g_szBusPrefix);
+		char const* const szName = pRootNode->getAttr(g_szNameAttribute);
+		path += szName;
 		FMOD_GUID guid = { 0 };
 
-		if (m_pSystem->lookupID(path.c_str(), &guid) == FMOD_OK)
+		if (g_pSystem->lookupID(path.c_str(), &guid) == FMOD_OK)
 		{
 			FMOD::Studio::Bus* pBus = nullptr;
-			FMOD_RESULT const fmodResult = m_pSystem->getBusByID(&guid, &pBus);
-			ASSERT_FMOD_OK;
+			CRY_VERIFY(g_pSystem->getBusByID(&guid, &pBus) == FMOD_OK);
 
-			MEMSTAT_CONTEXT(EMemStatContextTypes::MSC_AudioImpl, 0, "CryAudio::Impl::Fmod::CEnvironmentBus");
-			pEnvironment = new CEnvironmentBus(nullptr, pBus);
+			MEMSTAT_CONTEXT(EMemStatContextTypes::MSC_AudioImpl, 0, "CryAudio::Impl::Fmod::CReturn");
+
+#if defined(CRY_AUDIO_IMPL_FMOD_USE_DEBUG_CODE)
+			pIEnvironmentConnection = static_cast<IEnvironmentConnection*>(new CReturn(pBus, szName));
+#else
+			pIEnvironmentConnection = static_cast<IEnvironmentConnection*>(new CReturn(pBus));
+#endif      // CRY_AUDIO_IMPL_FMOD_USE_DEBUG_CODE
 		}
+#if defined(CRY_AUDIO_IMPL_FMOD_USE_DEBUG_CODE)
 		else
 		{
 			Cry::Audio::Log(ELogType::Warning, "Unknown Fmod bus: %s", path.c_str());
 		}
+#endif      // CRY_AUDIO_IMPL_FMOD_USE_DEBUG_CODE
 	}
-	else if (_stricmp(szTag, s_szParameterTag) == 0)
+	else if (_stricmp(szTag, g_szParameterTag) == 0)
 	{
 
-		char const* const szName = pRootNode->getAttr(s_szNameAttribute);
-		float multiplier = s_defaultParamMultiplier;
-		float shift = s_defaultParamShift;
-		pRootNode->getAttr(s_szMutiplierAttribute, multiplier);
-		pRootNode->getAttr(s_szShiftAttribute, shift);
+		char const* const szName = pRootNode->getAttr(g_szNameAttribute);
+		float multiplier = g_defaultParamMultiplier;
+		float shift = g_defaultParamShift;
+		pRootNode->getAttr(g_szMutiplierAttribute, multiplier);
+		pRootNode->getAttr(g_szShiftAttribute, shift);
 
-		MEMSTAT_CONTEXT(EMemStatContextTypes::MSC_AudioImpl, 0, "CryAudio::Impl::Fmod::CEnvironmentParameter");
-		pEnvironment = new CEnvironmentParameter(StringToId(szName), multiplier, shift, szName);
+		MEMSTAT_CONTEXT(EMemStatContextTypes::MSC_AudioImpl, 0, "CryAudio::Impl::Fmod::CParameterEnvironment");
+
+#if defined(CRY_AUDIO_IMPL_FMOD_USE_DEBUG_CODE)
+		pIEnvironmentConnection = static_cast<IEnvironmentConnection*>(new CParameterEnvironment(StringToId(szName), multiplier, shift, szName));
+#else
+		pIEnvironmentConnection = static_cast<IEnvironmentConnection*>(new CParameterEnvironment(StringToId(szName), multiplier, shift));
+#endif    // CRY_AUDIO_IMPL_FMOD_USE_DEBUG_CODE
 	}
+#if defined(CRY_AUDIO_IMPL_FMOD_USE_DEBUG_CODE)
 	else
 	{
 		Cry::Audio::Log(ELogType::Warning, "Unknown Fmod tag: %s", szTag);
 	}
+#endif      // CRY_AUDIO_IMPL_FMOD_USE_DEBUG_CODE
 
-	return static_cast<IEnvironmentConnection*>(pEnvironment);
+	return pIEnvironmentConnection;
 }
 
 ///////////////////////////////////////////////////////////////////////////
 void CImpl::DestructEnvironmentConnection(IEnvironmentConnection const* const pIEnvironmentConnection)
 {
-	auto const pEnvironment = static_cast<CEnvironment const*>(pIEnvironmentConnection);
-
-	for (auto const pObject : g_constructedObjects)
-	{
-		pObject->RemoveEnvironment(pEnvironment);
-	}
-
-	delete pEnvironment;
+	delete pIEnvironmentConnection;
 }
 
 //////////////////////////////////////////////////////////////////////////
 ISettingConnection* CImpl::ConstructSettingConnection(XmlNodeRef const pRootNode)
 {
-	MEMSTAT_CONTEXT(EMemStatContextTypes::MSC_AudioImpl, 0, "CryAudio::Impl::Fmod::CSetting");
-	return static_cast<ISettingConnection*>(new CSetting);
+	return nullptr;
 }
 
 //////////////////////////////////////////////////////////////////////////
@@ -1019,6 +1067,11 @@ void CImpl::DestructSettingConnection(ISettingConnection const* const pISettingC
 //////////////////////////////////////////////////////////////////////////
 void CImpl::OnRefresh()
 {
+#if defined(CRY_AUDIO_IMPL_FMOD_USE_DEBUG_CODE)
+	g_vcaValues.clear();
+#endif    // CRY_AUDIO_IMPL_FMOD_USE_DEBUG_CODE
+
+	ClearActiveSnapshots();
 	UnloadMasterBanks();
 	LoadMasterBanks();
 }
@@ -1033,11 +1086,11 @@ void CImpl::SetLanguage(char const* const szLanguage)
 		m_localizedSoundBankFolder += "/";
 		m_localizedSoundBankFolder += m_language.c_str();
 		m_localizedSoundBankFolder += "/";
-		m_localizedSoundBankFolder += AUDIO_SYSTEM_DATA_ROOT;
+		m_localizedSoundBankFolder += CRY_AUDIO_DATA_ROOT;
 		m_localizedSoundBankFolder += "/";
-		m_localizedSoundBankFolder += s_szImplFolderName;
+		m_localizedSoundBankFolder += g_szImplFolderName;
 		m_localizedSoundBankFolder += "/";
-		m_localizedSoundBankFolder += s_szAssetsFolderName;
+		m_localizedSoundBankFolder += g_szAssetsFolderName;
 	}
 }
 
@@ -1084,7 +1137,7 @@ FMOD_RESULT F_CALLBACK FmodFileOpenCallback(const char* szName, unsigned int* pF
 		auto const fileSize = static_cast<size_t>(gEnv->pCryPak->FTell(pFile));
 		gEnv->pCryPak->FSeek(pFile, 0, SEEK_SET);
 
-		if (fileSize >= s_maxFileSize)
+		if (fileSize >= g_maxFileSize)
 		{
 			gEnv->pCryPak->FClose(pFile);
 			fmodResult = FMOD_ERR_FILE_BAD;
@@ -1160,13 +1213,12 @@ FMOD_RESULT CImpl::LoadBankCustom(char const* const szFileName, FMOD::Studio::Ba
 	bankInfo.size = sizeof(bankInfo);
 	bankInfo.userdata = reinterpret_cast<void*>(const_cast<char*>(szFileName));
 
-	return m_pSystem->loadBankCustom(&bankInfo, FMOD_STUDIO_LOAD_BANK_NORMAL, ppBank);
+	return g_pSystem->loadBankCustom(&bankInfo, FMOD_STUDIO_LOAD_BANK_NORMAL, ppBank);
 }
 
 //////////////////////////////////////////////////////////////////////////
 void CImpl::LoadMasterBanks()
 {
-	FMOD_RESULT fmodResult = FMOD_ERR_UNINITIALIZED;
 	m_masterBankPath.clear();
 	m_masterAssetsBankPath.clear();
 	m_masterStreamsBankPath.clear();
@@ -1212,36 +1264,31 @@ void CImpl::LoadMasterBanks()
 
 		if (masterBankFileSize > 0 && masterBankStringsFileSize > 0)
 		{
-			fmodResult = LoadBankCustom(m_masterBankPath.c_str(), &m_pMasterBank);
-			ASSERT_FMOD_OK;
+			CRY_VERIFY(LoadBankCustom(m_masterBankPath.c_str(), &m_pMasterBank) == FMOD_OK);
 
-			fmodResult = LoadBankCustom(m_masterStringsBankPath.c_str(), &m_pMasterStringsBank);
-			ASSERT_FMOD_OK;
+			CRY_VERIFY(LoadBankCustom(m_masterStringsBankPath.c_str(), &m_pMasterStringsBank) == FMOD_OK);
 
 			if (m_pMasterBank != nullptr)
 			{
-#if defined(INCLUDE_FMOD_IMPL_PRODUCTION_CODE)
+#if defined(CRY_AUDIO_IMPL_FMOD_USE_DEBUG_CODE)
 				m_masterBankSize = masterBankFileSize;
 				m_masterStringsBankSize = masterBankStringsFileSize;
-#endif        // INCLUDE_FMOD_IMPL_PRODUCTION_CODE
+#endif        // CRY_AUDIO_IMPL_FMOD_USE_DEBUG_CODE
 
 				int numBuses = 0;
-				fmodResult = m_pMasterBank->getBusCount(&numBuses);
-				ASSERT_FMOD_OK;
+				CRY_VERIFY(m_pMasterBank->getBusCount(&numBuses) == FMOD_OK);
 
 				if (numBuses > 0)
 				{
 					MEMSTAT_CONTEXT(EMemStatContextTypes::MSC_AudioImpl, 0, "FMOD::Studio::Bus*[]");
 					FMOD::Studio::Bus** pBuses = new FMOD::Studio::Bus*[numBuses];
 					int numRetrievedBuses = 0;
-					fmodResult = m_pMasterBank->getBusList(pBuses, numBuses, &numRetrievedBuses);
-					ASSERT_FMOD_OK;
+					CRY_VERIFY(m_pMasterBank->getBusList(pBuses, numBuses, &numRetrievedBuses) == FMOD_OK);
 					CRY_ASSERT(numBuses == numRetrievedBuses);
 
 					for (int i = 0; i < numRetrievedBuses; ++i)
 					{
-						fmodResult = pBuses[i]->lockChannelGroup();
-						ASSERT_FMOD_OK;
+						CRY_VERIFY(pBuses[i]->lockChannelGroup() == FMOD_OK);
 					}
 
 					delete[] pBuses;
@@ -1252,69 +1299,63 @@ void CImpl::LoadMasterBanks()
 
 			if (masterBankAssetsFileSize > 0)
 			{
-				fmodResult = LoadBankCustom(m_masterAssetsBankPath.c_str(), &m_pMasterAssetsBank);
-				ASSERT_FMOD_OK;
+				CRY_VERIFY(LoadBankCustom(m_masterAssetsBankPath.c_str(), &m_pMasterAssetsBank) == FMOD_OK);
 
-#if defined(INCLUDE_FMOD_IMPL_PRODUCTION_CODE)
+#if defined(CRY_AUDIO_IMPL_FMOD_USE_DEBUG_CODE)
 				m_masterAssetsBankSize = masterBankAssetsFileSize;
-#endif        // INCLUDE_FMOD_IMPL_PRODUCTION_CODE
+#endif        // CRY_AUDIO_IMPL_FMOD_USE_DEBUG_CODE
 			}
 
 			size_t const masterBankStreamsFileSize = gEnv->pCryPak->FGetSize(m_masterStreamsBankPath.c_str());
 
 			if (masterBankStreamsFileSize > 0)
 			{
-				fmodResult = LoadBankCustom(m_masterStreamsBankPath.c_str(), &m_pMasterStreamsBank);
-				ASSERT_FMOD_OK;
+				CRY_VERIFY(LoadBankCustom(m_masterStreamsBankPath.c_str(), &m_pMasterStreamsBank) == FMOD_OK);
 			}
 		}
 	}
+#if defined(CRY_AUDIO_IMPL_FMOD_USE_DEBUG_CODE)
 	else
 	{
 		// This does not qualify for a fallback to the NULL implementation!
 		// Still notify the user about this failure!
-		Cry::Audio::Log(ELogType::Error, "Fmod failed to load master banks during %", __FUNCTION__);
+		Cry::Audio::Log(ELogType::Error, "Fmod failed to load master banks during %s", __FUNCTION__);
 	}
+#endif        // CRY_AUDIO_IMPL_FMOD_USE_DEBUG_CODE
 }
 
 //////////////////////////////////////////////////////////////////////////
 void CImpl::UnloadMasterBanks()
 {
-	FMOD_RESULT fmodResult = FMOD_ERR_UNINITIALIZED;
-
 	if (m_pMasterStringsBank != nullptr)
 	{
-		fmodResult = m_pMasterStringsBank->unload();
-		ASSERT_FMOD_OK;
+		CRY_VERIFY(m_pMasterStringsBank->unload() == FMOD_OK);
 		m_pMasterStringsBank = nullptr;
 	}
 
 	if (m_pMasterStreamsBank != nullptr)
 	{
-		fmodResult = m_pMasterStreamsBank->unload();
-		ASSERT_FMOD_OK;
+		CRY_VERIFY(m_pMasterStreamsBank->unload() == FMOD_OK);
 		m_pMasterStreamsBank = nullptr;
 	}
 
 	if (m_pMasterAssetsBank != nullptr)
 	{
-		fmodResult = m_pMasterAssetsBank->unload();
-		ASSERT_FMOD_OK;
+		CRY_VERIFY(m_pMasterAssetsBank->unload() == FMOD_OK);
 		m_pMasterAssetsBank = nullptr;
 	}
 
 	if (m_pMasterBank != nullptr)
 	{
-		fmodResult = m_pMasterBank->unload();
-		ASSERT_FMOD_OK;
+		CRY_VERIFY(m_pMasterBank->unload() == FMOD_OK);
 		m_pMasterBank = nullptr;
 	}
 
-#if defined(INCLUDE_FMOD_IMPL_PRODUCTION_CODE)
+#if defined(CRY_AUDIO_IMPL_FMOD_USE_DEBUG_CODE)
 	m_masterBankSize = 0;
 	m_masterStringsBankSize = 0;
 	m_masterAssetsBankSize = 0;
-#endif  // INCLUDE_FMOD_IMPL_PRODUCTION_CODE
+#endif  // CRY_AUDIO_IMPL_FMOD_USE_DEBUG_CODE
 }
 
 //////////////////////////////////////////////////////////////////////////
@@ -1322,18 +1363,18 @@ void CImpl::MuteMasterBus(bool const shouldMute)
 {
 	FMOD::Studio::Bus* pMasterBus = nullptr;
 
-#if defined(INCLUDE_FMOD_IMPL_PRODUCTION_CODE)
-	if (m_pSystem->getBus(s_szBusPrefix, &pMasterBus) != FMOD_OK)
+#if defined(CRY_AUDIO_IMPL_FMOD_USE_DEBUG_CODE)
+	if (g_pSystem->getBus(g_szBusPrefix, &pMasterBus) != FMOD_OK)
 	{
 		Cry::Audio::Log(ELogType::Error, "Failed to get master bus during %s", __FUNCTION__);
 	}
 #else
-	m_pSystem->getBus(s_szBusPrefix, &pMasterBus);
-#endif  // INCLUDE_FMOD_IMPL_PRODUCTION_CODE
+	g_pSystem->getBus(g_szBusPrefix, &pMasterBus);
+#endif  // CRY_AUDIO_IMPL_FMOD_USE_DEBUG_CODE
 
 	if (pMasterBus != nullptr)
 	{
-#if defined(INCLUDE_FMOD_IMPL_PRODUCTION_CODE)
+#if defined(CRY_AUDIO_IMPL_FMOD_USE_DEBUG_CODE)
 		if (pMasterBus->setMute(shouldMute) != FMOD_OK)
 		{
 			char const* const szMuteUnmute = shouldMute ? "mute" : "unmute";
@@ -1341,7 +1382,7 @@ void CImpl::MuteMasterBus(bool const shouldMute)
 		}
 #else
 		pMasterBus->setMute(shouldMute);
-#endif    // INCLUDE_FMOD_IMPL_PRODUCTION_CODE
+#endif    // CRY_AUDIO_IMPL_FMOD_USE_DEBUG_CODE
 	}
 }
 
@@ -1350,18 +1391,18 @@ void CImpl::PauseMasterBus(bool const shouldPause)
 {
 	FMOD::Studio::Bus* pMasterBus = nullptr;
 
-#if defined(INCLUDE_FMOD_IMPL_PRODUCTION_CODE)
-	if (m_pSystem->getBus(s_szBusPrefix, &pMasterBus) != FMOD_OK)
+#if defined(CRY_AUDIO_IMPL_FMOD_USE_DEBUG_CODE)
+	if (g_pSystem->getBus(g_szBusPrefix, &pMasterBus) != FMOD_OK)
 	{
 		Cry::Audio::Log(ELogType::Error, "Failed to get master bus during %s", __FUNCTION__);
 	}
 #else
-	m_pSystem->getBus(s_szBusPrefix, &pMasterBus);
-#endif  // INCLUDE_FMOD_IMPL_PRODUCTION_CODE
+	g_pSystem->getBus(g_szBusPrefix, &pMasterBus);
+#endif  // CRY_AUDIO_IMPL_FMOD_USE_DEBUG_CODE
 
 	if (pMasterBus != nullptr)
 	{
-#if defined(INCLUDE_FMOD_IMPL_PRODUCTION_CODE)
+#if defined(CRY_AUDIO_IMPL_FMOD_USE_DEBUG_CODE)
 		if (pMasterBus->setPaused(shouldPause) != FMOD_OK)
 		{
 			char const* const szPauseResume = shouldPause ? "pause" : "resume";
@@ -1369,182 +1410,352 @@ void CImpl::PauseMasterBus(bool const shouldPause)
 		}
 #else
 		pMasterBus->setPaused(shouldPause);
-#endif    // INCLUDE_FMOD_IMPL_PRODUCTION_CODE
+#endif    // CRY_AUDIO_IMPL_FMOD_USE_DEBUG_CODE
+	}
+}
+
+#if defined(CRY_AUDIO_IMPL_FMOD_USE_DEBUG_CODE)
+//////////////////////////////////////////////////////////////////////////
+CEventInstance* CImpl::ConstructEventInstance(TriggerInstanceId const triggerInstanceId, CEvent& event, CBaseObject const& baseObject)
+{
+	event.IncrementNumInstances();
+
+	MEMSTAT_CONTEXT(EMemStatContextTypes::MSC_AudioImpl, 0, "CryAudio::Impl::Fmod::CEventInstance");
+	auto const pEventInstance = new CEventInstance(triggerInstanceId, event, baseObject);
+	g_constructedEventInstances.push_back(pEventInstance);
+
+	return pEventInstance;
+}
+#else
+//////////////////////////////////////////////////////////////////////////
+CEventInstance* CImpl::ConstructEventInstance(TriggerInstanceId const triggerInstanceId, CEvent& event)
+{
+	event.IncrementNumInstances();
+
+	MEMSTAT_CONTEXT(EMemStatContextTypes::MSC_AudioImpl, 0, "CryAudio::Impl::Fmod::CEventInstance");
+	return new CEventInstance(triggerInstanceId, event);
+}
+#endif  // CRY_AUDIO_IMPL_FMOD_USE_DEBUG_CODE
+
+//////////////////////////////////////////////////////////////////////////
+void CImpl::DestructEventInstance(CEventInstance const* const pEventInstance)
+{
+#if defined(CRY_AUDIO_IMPL_FMOD_USE_DEBUG_CODE)
+	CRY_ASSERT_MESSAGE(pEventInstance != nullptr, "pEventInstance is nullpter during %s", __FUNCTION__);
+
+	auto iter(g_constructedEventInstances.begin());
+	auto const iterEnd(g_constructedEventInstances.cend());
+
+	for (; iter != iterEnd; ++iter)
+	{
+		if ((*iter) == pEventInstance)
+		{
+			if (iter != (iterEnd - 1))
+			{
+				(*iter) = g_constructedEventInstances.back();
+			}
+
+			g_constructedEventInstances.pop_back();
+			break;
+		}
+	}
+#endif  // CRY_AUDIO_IMPL_FMOD_USE_DEBUG_CODE
+
+	CEvent* const pEvent = &pEventInstance->GetEvent();
+	delete pEventInstance;
+
+	pEvent->DecrementNumInstances();
+
+	if (pEvent->CanBeDestructed())
+	{
+		delete pEvent;
 	}
 }
 
 //////////////////////////////////////////////////////////////////////////
-void CImpl::GetFileData(char const* const szName, SFileData& fileData) const
+void CImpl::DrawDebugMemoryInfo(IRenderAuxGeom& auxGeom, float const posX, float& posY, bool const drawDetailedInfo)
 {
-	FMOD::Sound* pSound = nullptr;
-	FMOD_CREATESOUNDEXINFO info;
-	ZeroStruct(info);
-	info.cbsize = sizeof(FMOD_CREATESOUNDEXINFO);
-	info.decodebuffersize = 1;
-	FMOD_RESULT const fmodResult = m_pLowLevelSystem->createStream(szName, FMOD_OPENONLY, &info, &pSound);
-	ASSERT_FMOD_OK;
+#if defined(CRY_AUDIO_IMPL_FMOD_USE_DEBUG_CODE)
+	float const headerPosY = posY;
+	posY += Debug::g_systemHeaderLineSpacerHeight;
 
-	if (pSound != nullptr)
-	{
-		unsigned int length = 0;
-		pSound->getLength(&length, FMOD_TIMEUNIT_MS);
-		fileData.duration = length / 1000.0f; // convert to seconds
-	}
-}
+	size_t totalPoolSize = 0;
 
-#if defined(INCLUDE_FMOD_IMPL_PRODUCTION_CODE)
-//////////////////////////////////////////////////////////////////////////
-void DrawMemoryPoolInfo(
-	IRenderAuxGeom& auxGeom,
-	float const posX,
-	float& posY,
-	stl::SPoolMemoryUsage const& mem,
-	stl::SMemoryUsage const& pool,
-	char const* const szType)
-{
-	CryFixedStringT<MaxMiscStringLength> memUsedString;
+	{
+		auto& allocator = CObject::GetAllocator();
+		size_t const memAlloc = allocator.GetTotalMemory().nAlloc;
+		totalPoolSize += memAlloc;
 
-	if (mem.nUsed < 1024)
-	{
-		memUsedString.Format("%" PRISIZE_T " Byte", mem.nUsed);
-	}
-	else
-	{
-		memUsedString.Format("%" PRISIZE_T " KiB", mem.nUsed >> 10);
+		if (drawDetailedInfo)
+		{
+			Debug::DrawMemoryPoolInfo(auxGeom, posX, posY, memAlloc, allocator.GetCounts(), "Objects", g_objectPoolSize);
+		}
 	}
 
-	CryFixedStringT<MaxMiscStringLength> memAllocString;
-
-	if (mem.nAlloc < 1024)
 	{
-		memAllocString.Format("%" PRISIZE_T " Byte", mem.nAlloc);
+		auto& allocator = CEventInstance::GetAllocator();
+		size_t const memAlloc = allocator.GetTotalMemory().nAlloc;
+		totalPoolSize += memAlloc;
+
+		if (drawDetailedInfo)
+		{
+			Debug::DrawMemoryPoolInfo(auxGeom, posX, posY, memAlloc, allocator.GetCounts(), "Event Instances", g_eventInstancePoolSize);
+		}
 	}
-	else
+
+	if (g_debugPoolSizes.events > 0)
 	{
-		memAllocString.Format("%" PRISIZE_T " KiB", mem.nAlloc >> 10);
+		auto& allocator = CEvent::GetAllocator();
+		size_t const memAlloc = allocator.GetTotalMemory().nAlloc;
+		totalPoolSize += memAlloc;
+
+		if (drawDetailedInfo)
+		{
+			Debug::DrawMemoryPoolInfo(auxGeom, posX, posY, memAlloc, allocator.GetCounts(), "Events", g_poolSizes.events);
+		}
 	}
 
-	posY += g_debugSystemLineHeight;
-	auxGeom.Draw2dLabel(posX, posY, g_debugSystemFontSize, g_debugSystemColorTextPrimary.data(), false,
-	                    "[%s] In Use: %" PRISIZE_T " | Constructed: %" PRISIZE_T " (%s) | Memory Pool: %s",
-	                    szType, pool.nUsed, pool.nAlloc, memUsedString.c_str(), memAllocString.c_str());
-}
-#endif  // INCLUDE_FMOD_IMPL_PRODUCTION_CODE
+	if (g_debugPoolSizes.parameters > 0)
+	{
+		auto& allocator = CParameter::GetAllocator();
+		size_t const memAlloc = allocator.GetTotalMemory().nAlloc;
+		totalPoolSize += memAlloc;
 
-//////////////////////////////////////////////////////////////////////////
-void CImpl::DrawDebugInfo(IRenderAuxGeom& auxGeom, float const posX, float& posY, bool const showDetailedInfo)
-{
-#if defined(INCLUDE_FMOD_IMPL_PRODUCTION_CODE)
+		if (drawDetailedInfo)
+		{
+			Debug::DrawMemoryPoolInfo(auxGeom, posX, posY, memAlloc, allocator.GetCounts(), "Parameters", g_poolSizes.parameters);
+		}
+	}
+
+	if (g_debugPoolSizes.parameterEnvironments > 0)
+	{
+		auto& allocator = CParameterEnvironment::GetAllocator();
+		size_t const memAlloc = allocator.GetTotalMemory().nAlloc;
+		totalPoolSize += memAlloc;
+
+		if (drawDetailedInfo)
+		{
+			Debug::DrawMemoryPoolInfo(auxGeom, posX, posY, memAlloc, allocator.GetCounts(), "Parameter Environments", g_poolSizes.parameterEnvironments);
+		}
+	}
+
+	if (g_debugPoolSizes.parameterStates > 0)
+	{
+		auto& allocator = CParameterState::GetAllocator();
+		size_t const memAlloc = allocator.GetTotalMemory().nAlloc;
+		totalPoolSize += memAlloc;
+
+		if (drawDetailedInfo)
+		{
+			Debug::DrawMemoryPoolInfo(auxGeom, posX, posY, memAlloc, allocator.GetCounts(), "Parameter States", g_poolSizes.parameterStates);
+		}
+	}
+
+	if (g_debugPoolSizes.snapshots > 0)
+	{
+		auto& allocator = CSnapshot::GetAllocator();
+		size_t const memAlloc = allocator.GetTotalMemory().nAlloc;
+		totalPoolSize += memAlloc;
+
+		if (drawDetailedInfo)
+		{
+			Debug::DrawMemoryPoolInfo(auxGeom, posX, posY, memAlloc, allocator.GetCounts(), "Snapshots", g_poolSizes.snapshots);
+		}
+	}
+
+	if (g_debugPoolSizes.returns > 0)
+	{
+		auto& allocator = CReturn::GetAllocator();
+		size_t const memAlloc = allocator.GetTotalMemory().nAlloc;
+		totalPoolSize += memAlloc;
+
+		if (drawDetailedInfo)
+		{
+			Debug::DrawMemoryPoolInfo(auxGeom, posX, posY, memAlloc, allocator.GetCounts(), "Returns", g_poolSizes.returns);
+		}
+	}
+
+	if (g_debugPoolSizes.vcas > 0)
+	{
+		auto& allocator = CVca::GetAllocator();
+		size_t const memAlloc = allocator.GetTotalMemory().nAlloc;
+		totalPoolSize += memAlloc;
+
+		if (drawDetailedInfo)
+		{
+			Debug::DrawMemoryPoolInfo(auxGeom, posX, posY, memAlloc, allocator.GetCounts(), "VCAs", g_poolSizes.vcas);
+		}
+	}
+
+	if (g_debugPoolSizes.vcaStates > 0)
+	{
+		auto& allocator = CVcaState::GetAllocator();
+		size_t const memAlloc = allocator.GetTotalMemory().nAlloc;
+		totalPoolSize += memAlloc;
+
+		if (drawDetailedInfo)
+		{
+			Debug::DrawMemoryPoolInfo(auxGeom, posX, posY, memAlloc, allocator.GetCounts(), "VCA States", g_poolSizes.vcaStates);
+		}
+	}
+
+	if (g_debugPoolSizes.banks > 0)
+	{
+		auto& allocator = CBank::GetAllocator();
+		size_t const memAlloc = allocator.GetTotalMemory().nAlloc;
+		totalPoolSize += memAlloc;
+
+		if (drawDetailedInfo)
+		{
+			Debug::DrawMemoryPoolInfo(auxGeom, posX, posY, memAlloc, allocator.GetCounts(), "Banks", g_poolSizes.banks);
+		}
+	}
+
 	CryModuleMemoryInfo memInfo;
 	ZeroStruct(memInfo);
 	CryGetMemoryInfoForModule(&memInfo);
 
-	CryFixedStringT<MaxMiscStringLength> memInfoString;
-	auto const memAlloc = static_cast<uint32>(memInfo.allocated - memInfo.freed);
+	CryFixedStringT<Debug::MaxMemInfoStringLength> memAllocSizeString;
+	auto const memAllocSize = static_cast<size_t>(memInfo.allocated - memInfo.freed);
+	Debug::FormatMemoryString(memAllocSizeString, memAllocSize - totalPoolSize);
 
-	if (memAlloc < 1024)
-	{
-		memInfoString.Format("%s (Total Memory: %u Byte)", m_name.c_str(), memAlloc);
-	}
-	else
-	{
-		memInfoString.Format("%s (Total Memory: %u KiB)", m_name.c_str(), memAlloc >> 10);
-	}
+	CryFixedStringT<Debug::MaxMemInfoStringLength> totalPoolSizeString;
+	Debug::FormatMemoryString(totalPoolSizeString, totalPoolSize);
 
-	auxGeom.Draw2dLabel(posX, posY, g_debugSystemHeaderFontSize, g_debugSystemColorHeader.data(), false, memInfoString.c_str());
+	CryFixedStringT<Debug::MaxMemInfoStringLength> totalMasterBankSizeString;
+	size_t const totalMasterBankSize = m_masterBankSize + m_masterStringsBankSize + m_masterAssetsBankSize;
+	Debug::FormatMemoryString(totalMasterBankSizeString, totalMasterBankSize);
 
-	if (showDetailedInfo)
-	{
-		posY += g_debugSystemLineHeight;
+	CryFixedStringT<Debug::MaxMemInfoStringLength> totalMemSizeString;
+	size_t const totalMemSize = memAllocSize + totalMasterBankSize;
+	Debug::FormatMemoryString(totalMemSizeString, totalMemSize);
 
-		if (m_pMasterAssetsBank != nullptr)
-		{
-			auxGeom.Draw2dLabel(posX, posY, g_debugSystemFontSize, g_debugSystemColorTextPrimary.data(), false, "Master Bank: %uKiB | Master Strings Bank: %uKiB | Master Assets Bank: %uKiB",
-			                    static_cast<uint32>(m_masterBankSize / 1024),
-			                    static_cast<uint32>(m_masterStringsBankSize / 1024),
-			                    static_cast<uint32>(m_masterAssetsBankSize / 1024));
-		}
-		else
-		{
-			auxGeom.Draw2dLabel(posX, posY, g_debugSystemFontSize, g_debugSystemColorTextPrimary.data(), false, "Master Bank: %uKiB | Master Strings Bank: %uKiB",
-			                    static_cast<uint32>(m_masterBankSize / 1024),
-			                    static_cast<uint32>(m_masterStringsBankSize / 1024));
-		}
+	auxGeom.Draw2dLabel(posX, headerPosY, Debug::g_systemHeaderFontSize, Debug::s_globalColorHeader, false, "%s (System: %s | Pools: %s | Master Bank: %s | Total: %s)",
+	                    m_name.c_str(), memAllocSizeString.c_str(), totalPoolSizeString.c_str(), totalMasterBankSizeString.c_str(), totalMemSizeString.c_str());
 
-		{
-			auto& allocator = CObject::GetAllocator();
-			DrawMemoryPoolInfo(auxGeom, posX, posY, allocator.GetTotalMemory(), allocator.GetCounts(), "Objects");
-		}
+	size_t const numEvents = g_constructedEventInstances.size();
 
-		{
-			auto& allocator = CEvent::GetAllocator();
-			DrawMemoryPoolInfo(auxGeom, posX, posY, allocator.GetTotalMemory(), allocator.GetCounts(), "Events");
-		}
-
-		if (g_debugPoolSizes.triggers > 0)
-		{
-			auto& allocator = CTrigger::GetAllocator();
-			DrawMemoryPoolInfo(auxGeom, posX, posY, allocator.GetTotalMemory(), allocator.GetCounts(), "Triggers");
-		}
-
-		if (g_debugPoolSizes.parameters > 0)
-		{
-			auto& allocator = CParameter::GetAllocator();
-			DrawMemoryPoolInfo(auxGeom, posX, posY, allocator.GetTotalMemory(), allocator.GetCounts(), "Parameters");
-		}
-
-		if (g_debugPoolSizes.switchStates > 0)
-		{
-			auto& allocator = CSwitchState::GetAllocator();
-			DrawMemoryPoolInfo(auxGeom, posX, posY, allocator.GetTotalMemory(), allocator.GetCounts(), "SwitchStates");
-		}
-
-		if (g_debugPoolSizes.envBuses > 0)
-		{
-			auto& allocator = CEnvironmentBus::GetAllocator();
-			DrawMemoryPoolInfo(auxGeom, posX, posY, allocator.GetTotalMemory(), allocator.GetCounts(), "EnvironmentBuses");
-		}
-
-		if (g_debugPoolSizes.envParameters > 0)
-		{
-			auto& allocator = CEnvironmentParameter::GetAllocator();
-			DrawMemoryPoolInfo(auxGeom, posX, posY, allocator.GetTotalMemory(), allocator.GetCounts(), "EnvironmentParameters");
-		}
-
-		if (g_debugPoolSizes.vcaParameters > 0)
-		{
-			auto& allocator = CVcaParameter::GetAllocator();
-			DrawMemoryPoolInfo(auxGeom, posX, posY, allocator.GetTotalMemory(), allocator.GetCounts(), "VCAParameters");
-		}
-
-		if (g_debugPoolSizes.vcaStates > 0)
-		{
-			auto& allocator = CVcaState::GetAllocator();
-			DrawMemoryPoolInfo(auxGeom, posX, posY, allocator.GetTotalMemory(), allocator.GetCounts(), "VCAStates");
-		}
-
-		if (g_debugPoolSizes.files > 0)
-		{
-			auto& allocator = CFile::GetAllocator();
-			DrawMemoryPoolInfo(auxGeom, posX, posY, allocator.GetTotalMemory(), allocator.GetCounts(), "Files");
-		}
-	}
-
-	if (g_numObjectsWithDoppler > 0)
-	{
-		posY += g_debugSystemLineHeight;
-		auxGeom.Draw2dLabel(posX, posY, g_debugSystemFontSize, g_debugSystemColorTextPrimary.data(), false, "Objects with Doppler: %u", g_numObjectsWithDoppler);
-	}
+	posY += Debug::g_systemLineHeight;
+	auxGeom.Draw2dLabel(posX, posY, Debug::g_systemFontSize, Debug::s_systemColorTextSecondary, false, "Active Events: %3" PRISIZE_T " | Objects with Doppler: %u",
+	                    numEvents, g_numObjectsWithDoppler);
 
 	Vec3 const& listenerPosition = g_pListener->GetPosition();
 	Vec3 const& listenerDirection = g_pListener->GetTransformation().GetForward();
 	float const listenerVelocity = g_pListener->GetVelocity().GetLength();
 	char const* const szName = g_pListener->GetName();
 
-	posY += g_debugSystemLineHeight;
-	auxGeom.Draw2dLabel(posX, posY, g_debugSystemFontSize, g_debugSystemColorListenerActive.data(), false, "Listener: %s | PosXYZ: %.2f %.2f %.2f | FwdXYZ: %.2f %.2f %.2f | Velocity: %.2f m/s",
+	posY += Debug::g_systemLineHeight;
+	auxGeom.Draw2dLabel(posX, posY, Debug::g_systemFontSize, Debug::s_systemColorListenerActive, false, "Listener: %s | PosXYZ: %.2f %.2f %.2f | FwdXYZ: %.2f %.2f %.2f | Velocity: %.2f m/s",
 	                    szName, listenerPosition.x, listenerPosition.y, listenerPosition.z, listenerDirection.x, listenerDirection.y, listenerDirection.z, listenerVelocity);
-#endif  // INCLUDE_FMOD_IMPL_PRODUCTION_CODE
+#endif  // CRY_AUDIO_IMPL_FMOD_USE_DEBUG_CODE
+}
+
+//////////////////////////////////////////////////////////////////////////
+void CImpl::DrawDebugInfoList(IRenderAuxGeom& auxGeom, float& posX, float posY, float const debugDistance, char const* const szTextFilter) const
+{
+#if defined(CRY_AUDIO_IMPL_FMOD_USE_DEBUG_CODE)
+	if ((g_cvars.m_debugListFilter & g_debugListMask) != 0)
+	{
+		CryFixedStringT<MaxControlNameLength> lowerCaseSearchString(szTextFilter);
+		lowerCaseSearchString.MakeLower();
+
+		float const initialPosY = posY;
+
+		if ((g_cvars.m_debugListFilter & EDebugListFilter::EventInstances) != 0)
+		{
+			auxGeom.Draw2dLabel(posX, posY, Debug::g_listHeaderFontSize, Debug::s_globalColorHeader, false, "Fmod Events [%" PRISIZE_T "]", g_constructedEventInstances.size());
+			posY += Debug::g_listHeaderLineHeight;
+
+			for (auto const pEventInstance : g_constructedEventInstances)
+			{
+				Vec3 const& position = pEventInstance->GetObject().GetTransformation().GetPosition();
+				float const distance = position.GetDistance(g_pListener->GetPosition());
+
+				if ((debugDistance <= 0.0f) || ((debugDistance > 0.0f) && (distance < debugDistance)))
+				{
+					char const* const szEventName = pEventInstance->GetEvent().GetName();
+					CryFixedStringT<MaxControlNameLength> lowerCaseEventName(szEventName);
+					lowerCaseEventName.MakeLower();
+					bool const draw = ((lowerCaseSearchString.empty() || (lowerCaseSearchString == "0")) || (lowerCaseEventName.find(lowerCaseSearchString) != CryFixedStringT<MaxControlNameLength>::npos));
+
+					if (draw)
+					{
+						EEventState const state = pEventInstance->GetState();
+						ColorF color = Debug::s_listColorItemActive;
+
+						if (state == EEventState::Pending)
+						{
+							color = Debug::s_listColorItemLoading;
+						}
+						else if (state == EEventState::Virtual)
+						{
+							color = Debug::s_globalColorVirtual;
+						}
+						else if (pEventInstance->IsFadingOut())
+						{
+							color = Debug::s_listColorItemStopping;
+						}
+
+						auxGeom.Draw2dLabel(posX, posY, Debug::g_listFontSize, color, false, "%s on %s", szEventName, pEventInstance->GetObject().GetName());
+
+						posY += Debug::g_listLineHeight;
+					}
+				}
+			}
+
+			posX += 600.0f;
+		}
+
+		if ((g_cvars.m_debugListFilter & EDebugListFilter::Snapshots) != 0)
+		{
+			posY = initialPosY;
+
+			auxGeom.Draw2dLabel(posX, posY, Debug::g_listHeaderFontSize, Debug::s_globalColorHeader, false, "Fmod Snapshots [%" PRISIZE_T "]", g_activeSnapshotNames.size());
+			posY += Debug::g_listHeaderLineHeight;
+
+			for (auto const& snapshotName : g_activeSnapshotNames)
+			{
+				CryFixedStringT<MaxControlNameLength> lowerCaseSnapshotName(snapshotName);
+				lowerCaseSnapshotName.MakeLower();
+				bool const draw = ((lowerCaseSearchString.empty() || (lowerCaseSearchString == "0")) || (lowerCaseSnapshotName.find(lowerCaseSearchString) != CryFixedStringT<MaxControlNameLength>::npos));
+
+				if (draw)
+				{
+					auxGeom.Draw2dLabel(posX, posY, Debug::g_listFontSize, Debug::s_listColorItemActive, false, "%s", snapshotName.c_str());
+
+					posY += Debug::g_listLineHeight;
+				}
+			}
+
+			posX += 300.0f;
+		}
+
+		if ((g_cvars.m_debugListFilter & EDebugListFilter::Vcas) != 0)
+		{
+			posY = initialPosY;
+
+			auxGeom.Draw2dLabel(posX, posY, Debug::g_listHeaderFontSize, Debug::s_globalColorHeader, false, "Fmod VCAs [%" PRISIZE_T "]", g_vcaValues.size());
+			posY += Debug::g_listHeaderLineHeight;
+
+			for (auto const& vcaPair : g_vcaValues)
+			{
+				char const* const szVcaName = vcaPair.first.c_str();
+				CryFixedStringT<MaxControlNameLength> lowerCaseVcaName(szVcaName);
+				lowerCaseVcaName.MakeLower();
+				bool const draw = ((lowerCaseSearchString.empty() || (lowerCaseSearchString == "0")) || (lowerCaseVcaName.find(lowerCaseSearchString) != CryFixedStringT<MaxControlNameLength>::npos));
+
+				if (draw)
+				{
+					auxGeom.Draw2dLabel(posX, posY, Debug::g_listFontSize, Debug::s_listColorItemActive, false, "%s : %3.2f", szVcaName, vcaPair.second);
+
+					posY += Debug::g_listLineHeight;
+				}
+			}
+
+			posX += 300.0f;
+		}
+	}
+#endif  // CRY_AUDIO_IMPL_FMOD_USE_DEBUG_CODE
 }
 } // namespace Fmod
 } // namespace Impl

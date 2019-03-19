@@ -1,19 +1,5 @@
 // Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
-/*************************************************************************
-   -------------------------------------------------------------------------
-   $Id$
-   $DateTime$
-
-   -------------------------------------------------------------------------
-   History:
-   - 09:05:2005   14:32 : Created by Carsten Wenzel
-
-*************************************************************************/
-
-#ifndef _SKY_LIGHT_MANAGER_H_
-#define _SKY_LIGHT_MANAGER_H_
-
 #pragma once
 
 #include <memory>
@@ -65,9 +51,6 @@ public:
 
 	void GetMemoryUsage(ICrySizer * pSizer) const;
 
-	void InitSkyDomeMesh();
-	void ReleaseSkyDomeMesh();
-
 	void UpdateInternal(int32 newFrameID, int32 numUpdates, int callerIsFullUpdate = 0);
 private:
 	typedef std::vector<CryHalf4> SkyDomeTextureData;
@@ -94,8 +77,6 @@ private:
 
 	bool m_bFlushFullUpdate;
 
-	_smart_ptr<IRenderMesh> m_pSkyDomeMesh;
-
 	int32 m_numSkyDomeColorsComputed;
 	int32 m_curBackBuffer;
 
@@ -114,5 +95,3 @@ private:
 
 	CRY_ALIGN(16) SSkyLightRenderParams m_renderParams;
 };
-
-#endif // #ifndef _SKY_LIGHT_MANAGER_H_

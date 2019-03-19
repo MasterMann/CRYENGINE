@@ -10,7 +10,6 @@
 #include "EntityPrototypeManager.h"
 #include "GameEngine.h"
 #include "GameTokens/GameTokenManager.h"
-#include "ICommandManager.h"
 #include "IEditorImpl.h"
 #include "IObjectManager.h"
 #include "IUndoManager.h"
@@ -35,7 +34,6 @@
 #include "Terrain/SurfaceType.h"
 #include "Terrain/TerrainManager.h"
 #include "Util/AutoLogTime.h"
-#include "Util/BoostPythonHelpers.h"
 #include "Util/FileUtil.h"
 #include "Util/MFCUtil.h"
 #include "Util/PakFile.h"
@@ -833,7 +831,6 @@ BOOL CCryEditDoc::DoOpenDocument(LPCTSTR lpszPathName, TOpenDocContext& context)
 	// write the full filename and path to the log
 	m_bLoadFailed = false;
 
-	ICryPak* pIPak = GetIEditorImpl()->GetSystem()->GetIPak();
 	string levelPath = PathUtil::GetPathWithoutFilename(relativeLevelName);
 
 	TDocMultiArchive arrXmlAr = {};
@@ -1464,20 +1461,16 @@ void CCryEditDoc::InitEmptyLevel(int resolution, float unitSize, bool bUseTerrai
 		GetIEditorImpl()->GetGameEngine()->SetLevelCreated(false);
 
 		// Default time of day.
-		XmlNodeRef root = GetISystem()->LoadXmlFromFile("%EDITOR%/default_time_of_day.xml");
-		if (root)
-		{
-			ITimeOfDay* pTimeOfDay = gEnv->p3DEngine->GetTimeOfDay();
-			pTimeOfDay->Serialize(root, true);
-			pTimeOfDay->SetTime(12.0f, true);  // Set to 12:00.
-		}
+		ITimeOfDay* const pTimeOfDay = gEnv->p3DEngine->GetTimeOfDay();
+		pTimeOfDay->LoadPreset(ITimeOfDay::GetDefaultPresetFilepath());
+		pTimeOfDay->SetTime(12.0f, true);
 	}
 
 	auto* pObjectLayerManager = GetIEditorImpl()->GetObjectManager()->GetLayersManager();
-	CObjectLayer* pMainLayer = pObjectLayerManager->CreateLayer("Main");
+	pObjectLayerManager->CreateLayer("Main");
 	if (bUseTerrain)
 	{
-		CObjectLayer* pTerrainLayer = pObjectLayerManager->CreateLayer("Terrain", eObjectLayerType_Terrain);
+		pObjectLayerManager->CreateLayer("Terrain", eObjectLayerType_Terrain);
 	}
 
 	GetISystem()->GetISystemEventDispatcher()->OnSystemEvent(ESYSTEM_EVENT_LEVEL_LOAD_END, 0, 0);
@@ -1549,8 +1542,6 @@ string CCryEditDoc::GetCryIndexPath(const LPCTSTR levelFilePath)
 
 BOOL CCryEditDoc::LoadXmlArchiveArray(TDocMultiArchive& arrXmlAr, const string& relativeLevelName, const string& levelPath)
 {
-	ICryPak* pIPak = GetIEditorImpl()->GetSystem()->GetIPak();
-
 	//if (m_pSWDoc->IsNull())
 	{
 		CXmlArchive* pXmlAr = new CXmlArchive();

@@ -1,16 +1,5 @@
 // Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
-// -------------------------------------------------------------------------
-//  File name:   3denginerender.cpp
-//  Version:     v1.00
-//  Created:     28/5/2001 by Vladimir Kajalin
-//  Compilers:   Visual Studio.NET
-//  Description: rendering
-// -------------------------------------------------------------------------
-//  History:
-//
-////////////////////////////////////////////////////////////////////////////
-
 #include "StdAfx.h"
 
 #include "3dEngine.h"
@@ -815,7 +804,7 @@ void C3DEngine::DebugDraw_UpdateDebugNode()
 void C3DEngine::RenderWorld(const int nRenderFlags, const SRenderingPassInfo& passInfo, const char* szDebugName)
 {
 	CRY_PROFILE_REGION(PROFILE_3DENGINE, "3DEngine: RenderWorld");
-	CRYPROFILE_SCOPE_PROFILE_MARKER("RenderWorld");
+	MEMSTAT_CONTEXT(EMemStatContextTypes::MSC_Other, 0, "C3DEngine::RenderWorld");
 
 	passInfo.GetIRenderView()->SetShaderRenderingFlags(nRenderFlags);
 
@@ -1512,36 +1501,14 @@ int __cdecl C3DEngine__Cmp_SRNInfo(const void* v1, const void* v2)
 	return 0;
 }
 
-IMaterial* C3DEngine::GetSkyMaterial()
+const SSkyLightRenderParams* C3DEngine::GetSkyLightRenderParams() const
 {
-	IMaterial* pRes(0);
-	if (GetCVars()->e_SkyType == 0)
-	{
-		if (!m_pSkyLowSpecMat)
-		{
-			m_pSkyLowSpecMat = m_skyLowSpecMatName.empty() ? 0 : m_pMatMan->LoadMaterial(m_skyLowSpecMatName.c_str(), false);
-		}
-		pRes = m_pSkyLowSpecMat;
-	}
-	else
-	{
-		if (!m_pSkyMat)
-		{
-			m_pSkyMat = m_skyMatName.empty() ? 0 : GetMatMan()->LoadMaterial(m_skyMatName.c_str(), false);
-		}
-		pRes = m_pSkyMat;
-	}
-	return pRes;
+	return m_pSkyLightManager ? m_pSkyLightManager->GetRenderParams() : NULL;
 }
 
-void C3DEngine::SetSkyMaterial(IMaterial* pSkyMat)
+void C3DEngine::SetSkyMaterial(IMaterial* pSkyMat, eSkyType type)
 {
-	m_pSkyMat = pSkyMat;
-}
-
-bool C3DEngine::IsHDRSkyMaterial(IMaterial* pMat) const
-{
-	return pMat && pMat->GetShaderItem().m_pShader && !stricmp(pMat->GetShaderItem().m_pShader->GetName(), "SkyHDR");
+	m_pSkyMat[type] = pSkyMat;
 }
 
 void C3DEngine::RenderScene(const int nRenderFlags, const SRenderingPassInfo& passInfo)
@@ -1562,15 +1529,6 @@ void C3DEngine::RenderScene(const int nRenderFlags, const SRenderingPassInfo& pa
 	if (GetCVars()->e_CoverageBuffer)
 		GetObjManager()->CullQueue().Wait();
 #endif
-
-	////////////////////////////////////////////////////////////////////////////////////////
-	// Draw potential occluders into z-buffer
-	////////////////////////////////////////////////////////////////////////////////////////
-
-	if (GetCVars()->e_Sleep > 0)
-	{
-		CrySleep(GetCVars()->e_Sleep);
-	}
 
 	////////////////////////////////////////////////////////////////////////////////////////
 	// Output debug data from last frame
@@ -1622,7 +1580,7 @@ void C3DEngine::RenderScene(const int nRenderFlags, const SRenderingPassInfo& pa
 	////////////////////////////////////////////////////////////////////////////////////////
 	// Add render elements for indoor
 	////////////////////////////////////////////////////////////////////////////////////////
-	if (passInfo.IsGeneralPass() && IsStatObjBufferRenderTasksAllowed() && JobManager::InvokeAsJob("CheckOcclusion"))
+	if (passInfo.IsGeneralPass() && IsStatObjBufferRenderTasksAllowed())
 		m_pObjManager->BeginOcclusionCulling(passInfo);
 
 
@@ -1649,6 +1607,8 @@ void C3DEngine::RenderScene(const int nRenderFlags, const SRenderingPassInfo& pa
 
 	if (passInfo.RenderShadows() && !passInfo.IsRecursivePass())
 	{
+		CRY_PROFILE_REGION(PROFILE_3DENGINE, "Prepare Shadow Passes");
+
 		// Collect shadow passes used in scene and allocate render view for each of them
 		uint32 nTimeSlicedShadowsUpdatedThisFrame = 0;
 		PrepareShadowPasses(passInfo, nTimeSlicedShadowsUpdatedThisFrame, shadowFrustums, shadowPassInfo);
@@ -1663,10 +1623,11 @@ void C3DEngine::RenderScene(const int nRenderFlags, const SRenderingPassInfo& pa
 	else
 	{
 		CRY_PROFILE_REGION(PROFILE_3DENGINE, "Traverse Outdoor Lights");
+		uint32 outdoorCullMask = IsOutdoorVisible() ? passCullMask : (passCullMask & ~kPassCullMainMask);
 
 		// render point lights
 		CLightEntity::SetShadowFrustumsCollector(nullptr);
-		m_pObjectsTree->Render_LightSources(false, passInfo);
+		m_pObjectsTree->Render_LightSources(false, outdoorCullMask, passInfo);
 	}
 
 	// draw objects inside visible vis areas
@@ -1705,9 +1666,9 @@ void C3DEngine::RenderScene(const int nRenderFlags, const SRenderingPassInfo& pa
 			//const_cast<CCamera&>(passInfo.GetCamera()).m_pMultiCamera = &m_pVisAreaManager->m_lstOutdoorPortalCameras;
 		}
 
-		if (IsOutdoorVisible())
+		if (IsSkyVisible())
 		{
-			RenderSkyBox(GetSkyMaterial(), passInfo);
+			UpdateSky(passInfo);
 		}
 
 		// start processing terrain
@@ -1721,7 +1682,8 @@ void C3DEngine::RenderScene(const int nRenderFlags, const SRenderingPassInfo& pa
 		passInfo.GetRendItemSorter().IncreaseOctreeCounter();
 		{
 			CRY_PROFILE_REGION(PROFILE_3DENGINE, "Traverse Outdoor Octree");
-			m_pObjectsTree->Render_Object_Nodes(false, OCTREENODE_RENDER_FLAG_OBJECTS, GetSkyColor(), passCullMask, passInfo);
+			uint32 outdoorCullMask = IsOutdoorVisible() ? passCullMask : (passCullMask & ~kPassCullMainMask);
+			m_pObjectsTree->Render_Object_Nodes(false, OCTREENODE_RENDER_FLAG_OBJECTS, GetSkyColor(), outdoorCullMask, passInfo);
 		}
 
 		if (GetCVars()->e_ObjectsTreeBBoxes >= 3)
@@ -1796,14 +1758,9 @@ void C3DEngine::RenderScene(const int nRenderFlags, const SRenderingPassInfo& pa
 	}
 
 	// tell the occlusion culler that no new work will be submitted
-	if (IsStatObjBufferRenderTasksAllowed() && passInfo.IsGeneralPass() && JobManager::InvokeAsJob("CheckOcclusion"))
-	{
-		GetObjManager()->PushIntoCullQueue(SCheckOcclusionJobData::CreateQuitJobData());
-	}
-
 	if (passInfo.IsGeneralPass())
 	{
-		gEnv->pSystem->DoWorkDuringOcclusionChecks();
+		GetObjManager()->m_CullThread.SetActive(false);
 	}
 
 #if defined(FEATURE_SVO_GI)
@@ -1815,7 +1772,7 @@ void C3DEngine::RenderScene(const int nRenderFlags, const SRenderingPassInfo& pa
 
 	// submit non-job render nodes into render views
 	// we wait for all render jobs to finish here
-	if (passInfo.IsGeneralPass() && IsStatObjBufferRenderTasksAllowed() && JobManager::InvokeAsJob("CheckOcclusion"))
+	if (passInfo.IsGeneralPass() && IsStatObjBufferRenderTasksAllowed())
 	{
 		m_pObjManager->RenderNonJobObjects(passInfo);
 	}
@@ -1876,6 +1833,8 @@ void C3DEngine::RenderScene(const int nRenderFlags, const SRenderingPassInfo& pa
 		passInfo.GetIRenderView()->SetGlobalFog(fog);
 	}
 
+	m_colorGradingCtrl.UpdateRenderView(*passInfo.GetIRenderView(), gEnv->pTimer->GetFrameTime());
+
 	if (passInfo.IsGeneralPass())
 		SetupClearColor(passInfo);
 
@@ -1912,7 +1871,7 @@ void C3DEngine::RenderScene(const int nRenderFlags, const SRenderingPassInfo& pa
 		m_bIsInRenderScene = false;
 	}
 
-	if (passInfo.IsGeneralPass() && IsStatObjBufferRenderTasksAllowed() && JobManager::InvokeAsJob("CheckOcclusion"))
+	if (passInfo.IsGeneralPass() && IsStatObjBufferRenderTasksAllowed())
 		m_pObjManager->EndOcclusionCulling();
 
 	// release shadow views (from now only renderer owns it)
@@ -1994,89 +1953,79 @@ void C3DEngine::ProcessOcean(const SRenderingPassInfo& passInfo)
 	}
 }
 
-void C3DEngine::RenderSkyBox(IMaterial* pMat, const SRenderingPassInfo& passInfo)
+bool C3DEngine::IsSkyVisible()
+{
+	return GetCVars()->e_SkyBox && IsOutdoorVisible();
+}
+
+void C3DEngine::UpdateSky(const SRenderingPassInfo& passInfo)
 {
 	FUNCTION_PROFILER_3DENGINE;
+	MEMSTAT_CONTEXT(EMemStatContextTypes::MSC_Other, 0, "C3DEngine::UpdateSky");
 
-	const float fForceDrawLastSortOffset = 100000.0f;
+	const eSkyType skyType = GetSkyType();
 
-	Vec3 vSkyLight(0.0f, 0.0f, 0.0f);
-
-	// hdr sky dome
-	// TODO: temporary workaround to force the right sky dome for the selected shader
-	if (m_pREHDRSky && IsHDRSkyMaterial(pMat))
+	// Note: this should be deprecated at some point.
+	// Update some sky params from the material:
+	//    - m_fSkyBoxAngle
+	//    - m_vSkyBoxExposure
+	//    - m_vSkyBoxOpacity
+	//    - m_SkyDomeTextureName
+	if (m_pSkyMat[skyType]
+		&& m_pSkyMat[skyType]->GetShaderItem().m_pShader
+		&& m_pSkyMat[skyType]->GetShaderItem().m_pShaderResources)
 	{
-		if (GetCVars()->e_SkyBox)
+		m_bSkyMatOverride = true;
+
+		IRenderShaderResources *const pShaderResources = m_pSkyMat[skyType]->GetShaderItem().m_pShaderResources;
+
+		auto& shaderParams = pShaderResources->GetParameters();
+		for (int i = 0; i < shaderParams.size(); i++)
 		{
-#ifndef CONSOLE_CONST_CVAR_MODE
-			if (GetCVars()->e_SkyQuality < 1)
-				GetCVars()->e_SkyQuality = 1;
-			else if (GetCVars()->e_SkyQuality > 2)
-				GetCVars()->e_SkyQuality = 2;
-#endif
-			m_pSkyLightManager->SetQuality(GetCVars()->e_SkyQuality);
-
-			// set sky light incremental update rate and perform update
-			if (GetCVars()->e_SkyUpdateRate <= 0.0f)
-				GetCVars()->e_SkyUpdateRate = 0.01f;
-			m_pSkyLightManager->IncrementalUpdate(GetCVars()->e_SkyUpdateRate, passInfo);
-
-			// prepare render object
-			CRenderObject* pObj = passInfo.GetIRenderView()->AllocateTemporaryRenderObject();
-			if (!pObj)
-				return;
-			pObj->SetMatrix(Matrix34::CreateTranslationMat(passInfo.GetCamera().GetPosition()), passInfo);
-			pObj->m_ObjFlags |= FOB_TRANS_TRANSLATE;
-			pObj->m_pRenderNode = 0;//m_pREHDRSky;
-			pObj->m_fSort = fForceDrawLastSortOffset; // force sky to draw last
-
-			/*			if( 0 == m_nRenderStackLevel )
-			   {
-			   // set scissor rect
-			   pObj->m_nScissorX1 = GetCamera().m_ScissorInfo.x1;
-			   pObj->m_nScissorY1 = GetCamera().m_ScissorInfo.y1;
-			   pObj->m_nScissorX2 = GetCamera().m_ScissorInfo.x2;
-			   pObj->m_nScissorY2 = GetCamera().m_ScissorInfo.y2;
-			   }*/
-
-			m_pREHDRSky->m_pRenderParams = m_pSkyLightManager->GetRenderParams();
-			m_pREHDRSky->m_moonTexId = m_nNightMoonTexId;
-
-			// add sky dome to render list
-			passInfo.GetIRenderView()->AddRenderObject(m_pREHDRSky, pMat->GetShaderItem(), pObj, passInfo, EFSLIST_GENERAL, 0);
-
-			// get sky lighting parameter.
-			const SSkyLightRenderParams* pSkyParams = m_pSkyLightManager->GetRenderParams();
-			if (pSkyParams)
+			const SShaderParam *const sp = &(shaderParams)[i];
+			if (sp && !stricmp(sp->m_Name, "SkyboxAngle") && sp->m_Type == eType_FLOAT)
 			{
-				Vec4 skylightRayleighInScatter;
-				skylightRayleighInScatter = pSkyParams->m_hazeColorRayleighNoPremul * pSkyParams->m_partialRayleighInScatteringConst;
-				vSkyLight = Vec3(skylightRayleighInScatter);
+				m_fSkyBoxAngle[1] = sp->m_Value.m_Float;
 			}
 		}
-	}
-	// skybox
-	else if (m_pRESky && pMat)
-	{
-		if (GetCVars()->e_SkyBox)
+
+		m_vSkyBoxExposure[1] = pShaderResources->GetFinalEmittance().toVec3();
+		m_vSkyBoxOpacity[1] = (pShaderResources->GetColorValue(EFTT_DIFFUSE) * pShaderResources->GetStrengthValue(EFTT_OPACITY)).toVec3();
+
+		if (const SEfResTexture *const pSkyTexInfo = pShaderResources->GetTexture(EFTT_DIFFUSE))
 		{
-			CRenderObject* pObj = passInfo.GetIRenderView()->AllocateTemporaryRenderObject();
-			if (!pObj)
-				return;
-			Matrix34 mat = Matrix34::CreateTranslationMat(passInfo.GetCamera().GetPosition());
-			pObj->SetMatrix(mat * Matrix33::CreateRotationZ(DEG2RAD(m_fSkyBoxAngle)), passInfo);
-			pObj->m_ObjFlags |= FOB_TRANS_TRANSLATE | FOB_TRANS_ROTATE;
-			pObj->m_fSort = fForceDrawLastSortOffset; // force sky to draw last
-
-			m_pRESky->m_fTerrainWaterLevel = max(0.0f, m_pTerrain->GetWaterLevel());
-			m_pRESky->m_fSkyBoxStretching = m_fSkyBoxStretching;
-			m_pRESky->m_fSkyBoxAngle = DEG2RAD(m_fSkyBoxAngle);
-
-			passInfo.GetIRenderView()->AddRenderObject(m_pRESky, pMat->GetShaderItem(), pObj, passInfo, EFSLIST_GENERAL, 0);
+			m_SkyDomeTextureName[1] = pSkyTexInfo->m_Name;
+		}
+		else
+		{
+			stl::free_container(m_SkyDomeTextureName[1]);
 		}
 	}
+	else
+	{
+		m_bSkyMatOverride = false;
+	}
 
-	SetGlobalParameter(E3DPARAM_SKYLIGHT_RAYLEIGH_INSCATTER, vSkyLight);
+	// dynamic sky dome
+	if (skyType == eSkyType_HDRSky)
+	{
+#ifndef CONSOLE_CONST_CVAR_MODE
+		GetCVars()->e_SkyQuality = crymath::clamp(GetCVars()->e_SkyQuality, 1, 2);
+#endif
+		m_pSkyLightManager->SetQuality(GetCVars()->e_SkyQuality);
+
+		// set sky light incremental update rate and perform update
+		GetCVars()->e_SkyUpdateRate = std::max(GetCVars()->e_SkyUpdateRate, 0.01f);
+		m_pSkyLightManager->IncrementalUpdate(GetCVars()->e_SkyUpdateRate, passInfo);
+
+		// get sky lighting parameter.
+		const SSkyLightRenderParams* pSkyParams = m_pSkyLightManager->GetRenderParams();
+		m_fogColorSkylightRayleighInScatter = Vec3(pSkyParams->m_hazeColorRayleighNoPremul * pSkyParams->m_partialRayleighInScatteringConst);
+	}
+	else
+	{
+		m_fogColorSkylightRayleighInScatter.SetZero();
+	}
 }
 
 void C3DEngine::DrawTextRightAligned(const float x, const float y, const char* format, ...)
@@ -2383,6 +2332,9 @@ void C3DEngine::DisplayInfo(float& fTextPosX, float& fTextPosY, float& fTextStep
 	case CONFIG_DURANGO:
 		AppendString(szFlagsEnd, "XboxOneSpec");
 		break;
+	case CONFIG_DURANGO_X:
+		AppendString(szFlagsEnd, "XboxOneXSpec");
+		break;
 	case CONFIG_ORBIS:
 		AppendString(szFlagsEnd, "PS4Spec");
 		break;
@@ -2571,26 +2523,6 @@ void C3DEngine::DisplayInfo(float& fTextPosX, float& fTextPosY, float& fTextStep
 		}
 	}
 
-	if (gEnv->pCharacterManager)
-	{
-		static ICVar* pAttachmentMerging = GetConsole()->GetCVar("ca_DrawAttachmentsMergedForShadows");
-		static ICVar* pAttachmentMergingBudget = GetConsole()->GetCVar("ca_AttachmentMergingMemoryBudget");
-
-		if (pAttachmentMerging && pAttachmentMergingBudget && pAttachmentMerging->GetIVal() > 0)
-		{
-			const IAttachmentMerger& pAttachmentMerger = gEnv->pCharacterManager->GetIAttachmentMerger();
-			uint nAllocatedBytes = pAttachmentMerger.GetAllocatedBytes();
-			bool bOutOfMemory = pAttachmentMerger.IsOutOfMemory();
-
-			if (bOutOfMemory || pAttachmentMerging->GetIVal() > 1)
-			{
-				char buffer[64];
-				cry_sprintf(buffer, "Character Attachment Merging (Shadows): %0.2f of %0.2f MB", nAllocatedBytes / (1024.f * 1024.f), pAttachmentMergingBudget->GetIVal() / (1024.0f * 1024.0f));
-				DrawTextRightAligned(fTextPosX, fTextPosY += fTextStepY, DISPLAY_INFO_SCALE, bOutOfMemory ? Col_Red : Col_White, "%s", buffer);
-			}
-		}
-	}
-
 	// print stats about textures' streaming
 	if (bTexStreaming)
 	{
@@ -2621,17 +2553,18 @@ void C3DEngine::DisplayInfo(float& fTextPosX, float& fTextPosY, float& fTextStep
 
 			const int iPercentage = int((float)stats.nCurrentPoolSize / stats.nMaxPoolSize * 100.f);
 			const int iStaticPercentage = int((float)stats.nStaticTexturesSize / stats.nMaxPoolSize * 100.f);
-			cry_sprintf(szTexStreaming, "TexStrm: TexRend: %u NumTex: %u Req:%.1fMB Mem(strm/stat/tot):%.1f/%.1f/%.1fMB(%d%%/%d%%) PoolSize:%" PRISIZE_T "MB PoolFrag:%.1f%%",
+			cry_sprintf(szTexStreaming, "TexStrm: TexRend: %u NumTex: %u Req:%.1fMB Mem(strm/stat/tot):%.1f/%.1f/%.1fMB(%d%%/%d%%) Overflow:(%llu MB, Num: %llu), PoolSize:%" PRISIZE_T "MB PoolFrag:%.1f%%",
 			            stats.nNumTexturesPerFrame, nTexCount, (float)nPlatformSize / 1024 / 1024,
 			            (float)stats.nStreamedTexturesSize / 1024 / 1024,
 			            (float)stats.nStaticTexturesSize / 1024 / 1024,
 			            (float)stats.nCurrentPoolSize / 1024 / 1024,
 			            iPercentage, iStaticPercentage,
+				        stats.nOverflowAllocationSize / 1024 / 1024, stats.nOverflowAllocationCount,
 			            stats.nMaxPoolSize / 1024 / 1024,
 			            stats.fPoolFragmentation * 100.0f
 			            );
 			bOverloadedPool |= stats.bPoolOverflowTotally;
-
+			bCloseToOutOfMem |= stats.nOverflowAllocationCount != 0;
 			bCloseToOutOfMem = iPercentage >= 90;
 			bOutOfMem = stats.bPoolOverflow;
 		}
@@ -2812,7 +2745,7 @@ void C3DEngine::DisplayInfo(float& fTextPosX, float& fTextPosY, float& fTextStep
 		#pragma warning( disable : 4267 )
 	#endif
 
-			DrawTextRightAligned(fTextPosX, fTextPosY += fTextStepY, "DLights=%s(%d/%d)", sLightsList, m_nRealLightsNum + m_nDeferredLightsNum, m_lstDynLights.Count());
+			DrawTextRightAligned(fTextPosX, fTextPosY += fTextStepY, "Probes=(%d) DLights=%s(%d/%d)", m_nDeferredProbesNum, sLightsList, m_nRealLightsNum + m_nDeferredLightsNum, m_lstDynLights.Count());
 		}
 		else
 		{
@@ -2844,7 +2777,7 @@ void C3DEngine::DisplayInfo(float& fTextPosX, float& fTextPosY, float& fTextStep
 			float nVidMemMB = (float)vidMemUsedThisFrame / (1024 * 1024);
 			int nPeakMemMB = (int)(processMemInfo.PeakPagefileUsage >> 20);
 			int nVirtMemMB = (int)(processMemInfo.PagefileUsage >> 20);
-			DrawTextRightAligned(fTextPosX, fTextPosY += fTextStepY, "Vid=%.2f Mem=%d Peak=%d DLights=(%d/%d)", nVidMemMB, nVirtMemMB, nPeakMemMB, m_nRealLightsNum + m_nDeferredLightsNum, (int)m_lstDynLights.Count());
+			DrawTextRightAligned(fTextPosX, fTextPosY += fTextStepY, "Vid=%.2f Mem=%d Peak=%d Probes=(%d) DLights=(%d/%d)", nVidMemMB, nVirtMemMB, nPeakMemMB, m_nDeferredProbesNum, m_nRealLightsNum + m_nDeferredLightsNum, (int)m_lstDynLights.Count());
 
 			if (GetCVars()->e_StreamInstances)
 			{
@@ -2914,6 +2847,7 @@ void C3DEngine::DisplayInfo(float& fTextPosX, float& fTextPosY, float& fTextStep
 		}
 
 		m_nDeferredLightsNum = 0;
+		m_nDeferredProbesNum = 0;
 	}
 	#if CAPTURE_REPLAY_LOG
 	{
@@ -3238,7 +3172,7 @@ void C3DEngine::DisplayInfo(float& fTextPosX, float& fTextPosY, float& fTextStep
 
 	if (GetCVars()->e_ParticlesDebug & AlphaBit('m'))
 	{
-		const stl::SPoolMemoryUsage memParticles = ParticleObjectAllocator().GetTotalMemory();
+		const stl::SPoolMemoryUsage memParticles = ParticleAllocator::GetTotalMemory();
 
 		ICrySizer* pSizerRE = GetSystem()->CreateSizer();
 		gEnv->pRenderer->GetMemoryUsageParticleREs(pSizerRE);
@@ -3403,13 +3337,13 @@ void C3DEngine::DisplayInfo(float& fTextPosX, float& fTextPosY, float& fTextStep
 		int nVarCount = pTimeOfDay->GetVariableCount();
 		for (int v = 0; v < nVarCount; ++v)
 		{
-			ITimeOfDay::SVariableInfo pVar;
-			pTimeOfDay->GetVariableInfo(v, pVar);
+			ITimeOfDay::SVariableInfo var;
+			pTimeOfDay->GetVariableInfo(v, var);
 
-			if (pVar.type == ITimeOfDay::TYPE_FLOAT)
-				DrawTextRightAligned(fTextPosX, fTextPosY += fTextStepY, " %s: %.9f", pVar.displayName, pVar.fValue[0]);
+			if (var.type == ITimeOfDay::TYPE_FLOAT)
+				DrawTextRightAligned(fTextPosX, fTextPosY += fTextStepY, " %s: %.9f", var.szDisplayName, var.fValue[0]);
 			else
-				DrawTextRightAligned(fTextPosX, fTextPosY += fTextStepY, " %s: %.3f %.3f %.3f", pVar.displayName, pVar.fValue[0], pVar.fValue[1], pVar.fValue[2]);
+				DrawTextRightAligned(fTextPosX, fTextPosY += fTextStepY, " %s: %.3f %.3f %.3f", var.szDisplayName, var.fValue[0], var.fValue[1], var.fValue[2]);
 		}
 		DrawTextRightAligned(fTextPosX, fTextPosY += fTextStepY, "---------------------------------------");
 	}
@@ -3421,7 +3355,7 @@ void C3DEngine::DisplayInfo(float& fTextPosX, float& fTextPosY, float& fTextStep
 		for (int i = 0; i < GetDynamicLightSources()->Count(); i++)
 		{
 			SRenderLight* pL = GetDynamicLightSources()->GetAt(i);
-			DrawTextRightAligned(fTextPosX, fTextPosY += fTextStepY, "%s - %d)", pL->m_sName, pL->m_Id);
+			DrawTextRightAligned(fTextPosX, fTextPosY += fTextStepY, "%s - %d)",pL->m_sName, pL->m_Id);
 		}
 		DrawTextRightAligned(fTextPosX, fTextPosY += fTextStepY, "---------------------------------------");
 	}
@@ -3511,7 +3445,7 @@ void C3DEngine::ScreenShotHighRes(CStitchedImage* pStitchedImage, const int nRen
 
 	GetRenderer()->EndFrame();
 
-	// Check output format and adjust acordingly
+	// Check output format and adjust accordingly
 	const char* szExtension = GetCVars()->e_ScreenShotFileFormat->GetString();
 	EReadTextureFormat dstFormat = (stricmp(szExtension, "tga") == 0) ? EReadTextureFormat::BGR8 : EReadTextureFormat::RGB8;
 	
@@ -3735,6 +3669,8 @@ void C3DEngine::FillDebugFPSInfo(SDebugFPSInfo& info)
 
 void C3DEngine::PrepareShadowPasses(const SRenderingPassInfo& passInfo, uint32& nTimeSlicedShadowsUpdatedThisFrame, std::vector<std::pair<ShadowMapFrustum*, const CLightEntity*>>& shadowFrustums, std::vector<SRenderingPassInfo>& shadowPassInfo)
 {
+	uint32 passCullMask = kPassCullMainMask; // initialize main view bit as visible
+
 	// enable collection of all accessed frustums
 	CLightEntity::SetShadowFrustumsCollector(&shadowFrustums);
 
@@ -3743,7 +3679,10 @@ void C3DEngine::PrepareShadowPasses(const SRenderingPassInfo& passInfo, uint32& 
 
 	// render outdoor point lights and collect dynamic point light frustums
 	if (IsObjectsTreeValid())
-		m_pObjectsTree->Render_LightSources(false, passInfo);
+	{
+		uint32 outdoorCullMask = IsOutdoorVisible() ? passCullMask : (passCullMask & ~kPassCullMainMask);
+		m_pObjectsTree->Render_LightSources(false, outdoorCullMask, passInfo);
+	}
 
 	// render indoor point lights and collect dynamic point light frustums
 	for (int i = 0; i < m_pVisAreaManager->m_lstVisibleAreas.Count(); ++i)
@@ -3753,7 +3692,7 @@ void C3DEngine::PrepareShadowPasses(const SRenderingPassInfo& passInfo, uint32& 
 		if (pArea->IsObjectsTreeValid())
 		{
 			for (int c = 0; c < pArea->m_lstCurCamerasLen; ++c)
-				pArea->GetObjectsTree()->Render_LightSources(false, SRenderingPassInfo::CreateTempRenderingInfo(CVisArea::s_tmpCameras[pArea->m_lstCurCamerasIdx + c], passInfo));
+				pArea->GetObjectsTree()->Render_LightSources(false, passCullMask, SRenderingPassInfo::CreateTempRenderingInfo(CVisArea::s_tmpCameras[pArea->m_lstCurCamerasIdx + c], passInfo));
 		}
 	}
 

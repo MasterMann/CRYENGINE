@@ -22,6 +22,7 @@
 #include "LineEditDelegate.h"
 #include "ManageWorkFilesDialog.h"
 
+#include "EditorFramework/Events.h"
 #include "Controls/BreadcrumbsBar.h"
 #include "Controls/QuestionDialog.h"
 #include "DragDrop.h"
@@ -41,6 +42,7 @@
 #include "QtViewPane.h"
 #include "ThreadingUtils.h"
 
+#include "VersionControl/VersionControlEventHandler.h"
 #include <IEditor.h>
 
 #include <QButtonGroup>
@@ -125,13 +127,13 @@ static bool UserConfirmsRenaming(CAsset& asset, QWidget* pParent)
 
 // A private helper class that allows to drop items into the root folder of details and thumbnails views.
 // This is a workaround for CAssetFolderFilterModel that does not support hierarchy so the views can not use QAbstractItemView::SetRootIndex()
-template <typename TView> 
+template<typename TView>
 class CDraggingIntoRootOf : public TView
 {
 public:
-	template<typename... Arg> 
-	CDraggingIntoRootOf(Arg&&... arg) 
-		: TView(std::forward<Arg>(arg)...)
+	template<typename ... Arg>
+	CDraggingIntoRootOf(Arg&& ... arg)
+		: TView(std::forward<Arg>(arg) ...)
 	{
 	}
 
@@ -181,7 +183,6 @@ public:
 		}
 	}
 
-
 	// For the QListView (Thumbnail view) we want to use QListView::Movement::Static but this will disable drag&drop.
 	// Calling here the QAbstractItemView implementation directly, we disable the items movement for the QListView.
 	template<typename T = TView, typename std::enable_if<std::is_same<T, QListView>::value, int>::type = 0>
@@ -195,7 +196,6 @@ public:
 	{
 		T::dropEvent(pEvent);
 	}
-
 
 	virtual void dropEvent(QDropEvent* pEvent) override
 	{
@@ -380,10 +380,12 @@ public:
 				context.callback = &callback;
 
 				const string value(QtUtil::ToString(pLineEdit->text()));
-				dll_string filename = SStaticAssetSelectorEntry::SelectFromAsset(context, {}, value.c_str());
-				if (!filename.empty() && filename.c_str() != value)
+
+				SResourceSelectionResult result = SStaticAssetSelectorEntry::SelectFromAsset(context, {}, value.c_str());
+
+				if (result.selectionAccepted)
 				{
-				  callback.SetValue(filename.c_str());
+				  callback.SetValue(result.selectedResource.c_str());
 				}
 				else // restore the previous value
 				{
@@ -481,9 +483,9 @@ public:
 		: CItemModelAttribute("Dependencies", &s_dependenciesAttributeType, CItemModelAttribute::AlwaysHidden, true, QVariant(), (int)CAssetModel::Roles::InternalPointerRole)
 	{
 		static CAssetModel::CAutoRegisterColumn column(this, [](const CAsset* pAsset, const CItemModelAttribute* /*pAttribute*/, int role)
-	    {
-			return QVariant();
-		});
+		    {
+		                                               return QVariant();
+				});
 	}
 };
 
@@ -494,14 +496,14 @@ public:
 		: CItemModelAttribute("Usage count", &Attributes::s_stringAttributeType, CItemModelAttribute::StartHidden, false)
 	{
 		static CAssetModel::CAutoRegisterColumn column(this, [](const CAsset* pAsset, const CItemModelAttribute* pAttribute, int role)
-		{
-			if (role != Qt::DisplayRole)
-			{
-				return QVariant();
-			}
-			const CUsageCountAttribute* const pUsageCountAttribute = static_cast<const CUsageCountAttribute*>(pAttribute);
-			return pUsageCountAttribute->GetValue(*pAsset);
-		});
+		    {
+		                                               if (role != Qt::DisplayRole)
+		                                               {
+		                                                 return QVariant();
+																									 }
+		                                               const CUsageCountAttribute* const pUsageCountAttribute = static_cast<const CUsageCountAttribute*>(pAttribute);
+		                                               return pUsageCountAttribute->GetValue(*pAsset);
+				});
 	}
 
 	void SetDetailContext(CAttributeFilter* pFilter)
@@ -529,6 +531,81 @@ private:
 
 static CDependenciesAttribute s_dependenciesAttribute;
 static CUsageCountAttribute s_usageCountAttribute;
+
+class CWorkFileOperator : public Attributes::IAttributeFilterOperator
+{
+public:
+	virtual QString GetName() override { return QWidget::tr("Work File"); }
+
+	virtual bool    Match(const QVariant& value, const QVariant& filterValue) override
+	{
+		if (!filterValue.isValid())
+		{
+			return true;
+		}
+
+		const CAsset* const pAsset = value.isValid() ? reinterpret_cast<CAsset*>(value.value<intptr_t>()) : nullptr;
+		if (!pAsset)
+		{
+			return false;
+		}
+
+		const string workFileSubstr = QtUtil::ToString(filterValue.toString());
+		for (const string& workFile : pAsset->GetWorkFiles())
+		{
+			if (workFile.find(workFileSubstr) != std::string::npos)
+			{
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	QWidget* CreateEditWidget(std::shared_ptr<CAttributeFilter> filter) override
+	{
+		auto pWidget = new QLineEdit();
+		auto currentValue = filter->GetFilterValue();
+
+		if (currentValue.type() == QVariant::String)
+		{
+			pWidget->setText(currentValue.toString());
+		}
+
+		QWidget::connect(pWidget, &QLineEdit::editingFinished, [filter, pWidget]()
+		{
+			filter->SetFilterValue(pWidget->text());
+		});
+
+		return pWidget;
+	}
+
+	void UpdateWidget(QWidget* widget, const QVariant& value) override
+	{
+		QLineEdit* pEdit = qobject_cast<QLineEdit*>(widget);
+		if (pEdit)
+		{
+			pEdit->setText(value.toString());
+		}
+	}
+};
+
+static CAttributeType<QString> s_workFileAttributeType({ new CWorkFileOperator() });
+
+class CWorkFileAttribute : public CItemModelAttribute
+{
+public:
+	CWorkFileAttribute()
+		: CItemModelAttribute("Work File", &s_workFileAttributeType, CItemModelAttribute::AlwaysHidden, true, QVariant(), (int)CAssetModel::Roles::InternalPointerRole)
+	{
+		static CAssetModel::CAutoRegisterColumn column(this, [](const CAsset* pAsset, const CItemModelAttribute* /*pAttribute*/, int role)
+		{
+			return QVariant();
+		});
+	}
+};
+
+static CWorkFileAttribute g_workFilesAttribute;
 
 class SortFilterProxyModel : public QAttributeFilterProxyModel
 {
@@ -752,9 +829,9 @@ void TryInstantEditing(CAsset* pAsset)
 	CRY_ASSERT(pAssetEditor->CanOpenAsset(pAsset));
 
 	CRY_ASSERT(GetIEditor()->FindDockableIf([pAssetEditor, pAsset](IPane* pPane, const string& className) -> bool
-	{
-		return pAssetEditor == pPane && pAsset->GetType()->GetInstantEditor() == static_cast<CAssetEditor*>(pPane);
-	}));
+		{
+			return pAssetEditor == pPane && pAsset->GetType()->GetInstantEditor() == static_cast<CAssetEditor*>(pPane);
+		}));
 
 	pAsset->Edit(pAssetEditor);
 
@@ -905,8 +982,7 @@ void CAssetBrowser::InitViews(bool bHideEngineFolder)
 	m_pFilterPanel->EnableDelayedSearch(true, 500.f);
 	m_pFilterPanel->SetContent(pAssetsView);
 	m_pFilterPanel->GetSearchBox()->setPlaceholderText(tr("Search Assets"));
-	m_pFilterPanel->GetSearchBox()->signalOnFiltered.Connect(this, &CAssetBrowser::UpdateModels);
-	m_pFilterPanel->signalOnFiltered.Connect(this, &CAssetBrowser::UpdateModels);
+	m_pFilterPanel->GetSearchBox()->signalOnSearch.Connect(this, &CAssetBrowser::OnSearch);
 
 	m_pFoldersSplitter = new QSplitter();
 	m_pFoldersSplitter->setOrientation(Qt::Horizontal);
@@ -991,7 +1067,12 @@ void CAssetBrowser::InitActions()
 	pAction->setCheckable(true);
 	pAction->setChecked(false);
 	pAction->setIconVisibleInMenu(false);
-	connect(pAction, &QAction::toggled, this, [this](bool checked) { UpdateModels(); });
+	connect(pAction, &QAction::toggled, this, [this](bool checked) 
+	{ 
+		m_pFolderFilterModel->SetRecursive(checked);
+		m_pFolderFilterModel->SetShowFolders(!checked);
+		m_recursiveSearch = false;
+	});
 	m_pActionRecursiveView = pAction;
 }
 
@@ -1110,18 +1191,12 @@ void CAssetBrowser::InitMenus()
 		CRY_ASSERT(m_pActionRecursiveView);
 		menuView->AddAction(m_pActionRecursiveView, sec);
 
-		action = menuView->CreateAction(tr("Recursive Search"), sec);
-		action->setCheckable(true);
-		action->setEnabled(!IsRecursiveView());
-		action->setChecked(m_recursiveSearch || IsRecursiveView());
-		connect(action, &QAction::triggered, this, [&]() { SetRecursiveSearch(!m_recursiveSearch); });
-
 		if (m_pFilterPanel)
 		{
 		  m_pFilterPanel->FillMenu(menuView, tr("Apply Filter"));
 		}
 	});
-	
+
 	s_signalMenuCreated(*GetMenu(MenuItems::ViewMenu), std::make_shared<Private_AssetBrowser::CContextMenuContext>(this));
 }
 
@@ -1328,6 +1403,7 @@ void CAssetBrowser::EditNewAsset()
 			pView = m_pDetailsView;
 		}
 	}
+
 	const int col = pView == m_pThumbnailView->GetInternalView() ? eAssetColumns_Thumbnail : eAssetColumns_Name;
 
 	const QModelIndex sourceIndex = CNewAssetModel::GetInstance()->index(0, col, QModelIndex());
@@ -1415,12 +1491,6 @@ void CAssetBrowser::SetLayout(const QVariantMap& state)
 		SetRecursiveView(recursiveViewVar.toBool());
 	}
 
-	QVariant recursiveSearchVar = state.value("recursiveSearch");
-	if (recursiveSearchVar.isValid())
-	{
-		SetRecursiveSearch(recursiveSearchVar.toBool());
-	}
-
 	QVariant showFoldersVar = state.value("showFolders");
 	if (showFoldersVar.isValid())
 	{
@@ -1476,7 +1546,6 @@ QVariantMap CAssetBrowser::GetLayout() const
 	state.insert("foldersSplitter", m_pFoldersSplitter->saveState().toBase64());
 	state.insert("viewMode", (int)m_viewMode);
 	state.insert("recursiveView", IsRecursiveView());
-	state.insert("recursiveSearch", m_recursiveSearch);
 	state.insert("showFolders", IsFoldersViewVisible());
 #if ASSET_BROWSER_USE_PREVIEW_WIDGET
 	state.insert("showPreview", m_previewWidget->isVisibleTo(this));
@@ -1502,9 +1571,15 @@ std::vector<CAsset*> CAssetBrowser::GetSelectedAssets() const
 	return assets;
 }
 
-QStringList CAssetBrowser::GetSelectedFolders() const
+std::vector<string> CAssetBrowser::GetSelectedFolders() const
 {
-	return m_pFoldersView->GetSelectedFolders();
+	std::vector<string> folders;
+	folders.reserve(folders.size());
+	for (const QString& f : m_pFoldersView->GetSelectedFolders())
+	{
+		folders.push_back(QtUtil::ToString(f));
+	}
+	return folders;
 }
 
 CAsset* CAssetBrowser::GetLastSelectedAsset() const
@@ -1571,29 +1646,22 @@ void CAssetBrowser::SetRecursiveView(bool recursiveView)
 	}
 }
 
-void CAssetBrowser::SetRecursiveSearch(bool recursiveSearch)
+void CAssetBrowser::OnSearch(bool isNewSearch)
 {
-	if (m_recursiveSearch != recursiveSearch)
-	{
-		m_recursiveSearch = recursiveSearch;
-		UpdateModels();
-	}
-}
+	// If recursive view is disabled:
+	//  - Enable recursive view as soon as the first character is entered.
+	//  - Disable recursive view when the last character is removed from the query. 
 
-void CAssetBrowser::UpdateModels()
-{
-	//swaps to recursive view when recursive search is on
-	bool searching = !m_pFilterPanel->GetSearchBox()->IsEmpty() || m_pFilterPanel->HasActiveFilters();
-
-	if (searching && m_recursiveSearch && !m_pFolderFilterModel->IsRecursive())
+	const bool searching = !m_pFilterPanel->GetSearchBox()->IsEmpty();
+	if (searching && !m_recursiveSearch && isNewSearch && !IsRecursiveView())
 	{
-		m_pFolderFilterModel->SetShowFolders(false);
-		m_pFolderFilterModel->SetRecursive(true);
+		SetRecursiveView(true);
+		m_recursiveSearch = true;
 	}
-	else if (!searching && IsRecursiveView() != m_pFolderFilterModel->IsRecursive())
+	else if (!searching && m_recursiveSearch)
 	{
-		m_pFolderFilterModel->SetRecursive(IsRecursiveView());
-		m_pFolderFilterModel->SetShowFolders(!IsRecursiveView());
+		m_recursiveSearch = false;
+		SetRecursiveView(false);
 	}
 }
 
@@ -1726,7 +1794,7 @@ void CAssetBrowser::CreateContextMenu(bool isFolderView /*= false*/)
 	{
 		if (isFolderView)
 		{
-			folders = GetSelectedFoldersInFolderView();
+			folders = GetSelectedFolders();
 		}
 		BuildContextMenuForFolders(folders, abstractMenu);
 	}
@@ -1744,11 +1812,9 @@ void CAssetBrowser::CreateContextMenu(bool isFolderView /*= false*/)
 	}
 }
 
-void CAssetBrowser::BuildContextMenuForEmptiness(CAbstractMenu &abstractMenu)
+void CAssetBrowser::BuildContextMenuForEmptiness(CAbstractMenu& abstractMenu)
 {
-	const bool isRecursiveView = m_recursiveSearch || IsRecursiveView();
-
-	std::vector<string> selectedFolders = GetSelectedFoldersInFolderView();
+	std::vector<string> selectedFolders = GetSelectedFolders();
 	CAssetFoldersModel* pModel = CAssetFoldersModel::GetInstance();
 
 	int foldersSection = abstractMenu.GetNextEmptySection();
@@ -1765,7 +1831,7 @@ void CAssetBrowser::BuildContextMenuForEmptiness(CAbstractMenu &abstractMenu)
 
 		action = abstractMenu.CreateAction(tr("Paste"), foldersSection);
 		connect(action, &QAction::triggered, [this]() { OnPaste(); });
-		action->setDisabled(Private_AssetBrowser::g_clipboard.empty() || isRecursiveView);
+		action->setDisabled(Private_AssetBrowser::g_clipboard.empty() || m_pFolderFilterModel->IsRecursive());
 
 		action = abstractMenu.CreateAction(tr("Import"), foldersSection);
 		connect(action, &QAction::triggered, [this]() { OnImport(); });
@@ -1783,19 +1849,7 @@ void CAssetBrowser::BuildContextMenuForEmptiness(CAbstractMenu &abstractMenu)
 	NotifyContextMenuCreation(abstractMenu, {}, selectedFolders);
 }
 
-std::vector<string> CAssetBrowser::GetSelectedFoldersInFolderView()
-{
-	auto& selectedFolders = m_pFoldersView->GetSelectedFolders();
-
-	std::vector<string> folders;
-	folders.reserve(selectedFolders.size());
-	std::transform(selectedFolders.cbegin(), selectedFolders.cend(), std::back_inserter(folders), [](const QString& str)
-	{	
-		return QtUtil::ToString(str);
-	});
-	return folders;
-}
-void CAssetBrowser::BuildContextMenuForFolders(const std::vector<string>& folders, CAbstractMenu &abstractMenu)
+void CAssetBrowser::BuildContextMenuForFolders(const std::vector<string>& folders, CAbstractMenu& abstractMenu)
 {
 	if (folders.size() > 1)
 	{
@@ -1841,7 +1895,7 @@ void CAssetBrowser::BuildContextMenuForFolders(const std::vector<string>& folder
 	NotifyContextMenuCreation(abstractMenu, {}, folders);
 }
 
-void CAssetBrowser::BuildContextMenuForAssets(const std::vector<CAsset*>& assets, const std::vector<string>& folders, CAbstractMenu &abstractMenu)
+void CAssetBrowser::BuildContextMenuForAssets(const std::vector<CAsset*>& assets, const std::vector<string>& folders, CAbstractMenu& abstractMenu)
 {
 	bool canReimport = false;
 	bool canCopy = false;
@@ -1891,11 +1945,11 @@ void CAssetBrowser::BuildContextMenuForAssets(const std::vector<CAsset*>& assets
 	if (isModified)
 	{
 		auto action = abstractMenu.CreateAction(tr("Save"));
-		connect(action, &QAction::triggered, [this, assets]() 
-		{  
+		connect(action, &QAction::triggered, [this, assets]()
+		{
 			for (CAsset* pAsset : assets)
 			{
-				pAsset->Save();
+			  pAsset->Save();
 			}
 		});
 
@@ -1908,9 +1962,9 @@ void CAssetBrowser::BuildContextMenuForAssets(const std::vector<CAsset*>& assets
 			const auto button = CQuestionDialog::SQuestion(title, text, QDialogButtonBox::Discard | QDialogButtonBox::Cancel, QDialogButtonBox::Cancel);
 			if (QDialogButtonBox::Discard == button)
 			{
-				for (CAsset* pAsset : assets)
-				{
-					pAsset->Reload();
+			  for (CAsset* pAsset : assets)
+			  {
+			    pAsset->Reload();
 				}
 			}
 		});
@@ -1974,7 +2028,7 @@ void CAssetBrowser::AddWorkFilesMenu(CAbstractMenu& abstractMenu, CAsset* pAsset
 			action = pWorkFileMenu->CreateAction(tr("Copy Path"));
 			connect(action, &QAction::triggered, [workFile]()
 			{
-				const string path = PathUtil::Make(PathUtil::GetGameProjectAssetsPath(), workFile);
+				const string path = PathUtil::MatchAbsolutePathToCaseOnFileSystem(PathUtil::Make(PathUtil::GetGameProjectAssetsPath(), workFile));
 				QApplication::clipboard()->setText(QtUtil::ToQString(path));
 			});
 
@@ -1990,7 +2044,7 @@ void CAssetBrowser::AddWorkFilesMenu(CAbstractMenu& abstractMenu, CAsset* pAsset
 	connect(action, &QAction::triggered, [this, pAsset]() { CManageWorkFilesDialog::ShowWindow(pAsset); });
 }
 
-void CAssetBrowser::NotifyContextMenuCreation(CAbstractMenu& menu, const std::vector<CAsset*>& assets, const std::vector<string>& folders) 
+void CAssetBrowser::NotifyContextMenuCreation(CAbstractMenu& menu, const std::vector<CAsset*>& assets, const std::vector<string>& folders)
 {
 	if (menu.FindSectionByName("Assets") == CAbstractMenu::eSections_Default)
 	{
@@ -1999,6 +2053,43 @@ void CAssetBrowser::NotifyContextMenuCreation(CAbstractMenu& menu, const std::ve
 	}
 
 	s_signalContextMenuRequested(menu, assets, folders, std::make_shared<Private_AssetBrowser::CContextMenuContext>(this));
+}
+
+void CAssetBrowser::customEvent(QEvent* pEvent)
+{
+	if (pEvent->type() != SandboxEvent::Command)
+	{
+		CDockableEditor::customEvent(pEvent);
+		return;
+	}
+
+	CommandEvent* pCommandEvent = static_cast<CommandEvent*>(pEvent);
+
+	QStringList params = QtUtil::ToQString(pCommandEvent->GetCommand()).split(' ');
+
+	if (params.empty())
+		return;
+
+	QString command = params[0];
+	params.removeFirst();
+
+	QStringList fullCommand = command.split('.');
+	QString module = fullCommand[0];
+	command = fullCommand[1];
+
+	if (module == "version_control_system")
+	{
+		std::vector<CAsset*> assets;
+		std::vector<string> folders;
+		ProcessSelection(assets, folders);
+		const bool hasMainViewSelection = !assets.empty() || !folders.empty();
+		VersionControlEventHandler::HandleOnAssetBrowser(command, std::move(assets), hasMainViewSelection ? 
+			std::move(folders) : GetSelectedFolders());
+	}
+	else
+	{
+		CDockableEditor::customEvent(pEvent);
+	}
 }
 
 void CAssetBrowser::AppendFilterDependenciesActions(CAbstractMenu* pAbstractMenu, const CAsset* pAsset)
@@ -2014,9 +2105,9 @@ void CAssetBrowser::AppendFilterDependenciesActions(CAbstractMenu* pAbstractMenu
 			CAssetBrowser* const pAssetBrowser = static_cast<CAssetBrowser*>(GetIEditor()->CreateDockable("Asset Browser"));
 			if (pAssetBrowser)
 			{
-				pAssetBrowser->GetFilterPanel()->AddFilter(s_dependenciesAttribute.GetName(), pOperator->GetName(), QtUtil::ToQString(pAsset->GetFile(0)));
-				pAssetBrowser->GetFilterPanel()->SetExpanded(true);
-				pAssetBrowser->SetRecursiveView(true);
+			  pAssetBrowser->GetFilterPanel()->AddFilter(s_dependenciesAttribute.GetName(), pOperator->GetName(), QtUtil::ToQString(pAsset->GetFile(0)));
+			  pAssetBrowser->GetFilterPanel()->SetExpanded(true);
+			  pAssetBrowser->SetRecursiveView(true);
 			}
 		});
 	}
@@ -2040,7 +2131,7 @@ void CAssetBrowser::OnActivated(const QModelIndex& index)
 		}
 	case eAssetModelRow_Folder:
 		{
-		OnActivated(ToFolderPath(index));
+			OnActivated(ToFolderPath(index));
 			break;
 		}
 	default:
@@ -2310,9 +2401,19 @@ void CAssetBrowser::Paste(bool pasteNextToOriginal)
 	string selectedFolder;
 	if (!pasteNextToOriginal)
 	{
-		if (m_recursiveSearch || IsRecursiveView())
+		if (m_recursiveSearch)
 		{
-			CryWarning(VALIDATOR_MODULE_EDITOR, VALIDATOR_WARNING, "Target folder is ambiguous. Please turn off the recursive view/search");
+			CRY_ASSERT(!m_pFilterPanel->GetSearchBox()->IsEmpty());
+
+			const char* szMsg = QT_TR_NOOP("The target folder is ambiguous when the search result is displayed. Please cancel the search by clearing the search bar.");
+			CryWarning(VALIDATOR_MODULE_EDITOR, VALIDATOR_WARNING, szMsg);
+			return;
+		}
+
+		if (IsRecursiveView())
+		{
+			const char* szMsg = QT_TR_NOOP("Target folder is ambiguous.Please turn off the recursive view");
+			CryWarning(VALIDATOR_MODULE_EDITOR, VALIDATOR_WARNING, szMsg);
 			return;
 		}
 
@@ -2341,7 +2442,7 @@ void CAssetBrowser::Paste(bool pasteNextToOriginal)
 		{
 			if (pExistingAsset->GetFolder().CompareNoCase(folder) == 0)
 			{
-				exclusions.push_back(pExistingAsset->GetName());
+			  exclusions.push_back(pExistingAsset->GetName());
 			}
 		});
 		const string name = PathUtil::GetUniqueName(pAsset->GetName(), exclusions);
@@ -2355,22 +2456,35 @@ void CAssetBrowser::Paste(bool pasteNextToOriginal)
 
 void CAssetBrowser::OnRenameFolder(const QString& folder)
 {
-	auto view = GetFocusedView();
-	if (!view)
+	const QModelIndex sourceIndex = CAssetFoldersModel::GetInstance()->FindIndexForFolder(folder);
+	if (!sourceIndex.isValid())
 	{
 		return;
 	}
 
-	QModelIndex sourceIndex = CAssetFoldersModel::GetInstance()->FindIndexForFolder(folder);
+	// renaming in assets views.
 
-	auto column = view == m_pDetailsView ? EAssetColumns::eAssetColumns_Name : EAssetColumns::eAssetColumns_Thumbnail;
-	sourceIndex = sourceIndex.sibling(sourceIndex.row(), column);
-	QModelIndex index;
-	if (QtUtil::MapFromSourceIndirect(view, sourceIndex, index))
+	QAbstractItemView* const pView = GetFocusedView();
+	if (pView)
 	{
-		m_pSelection->setCurrentIndex(index, QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
-		view->edit(index);
+		const auto column = pView == m_pThumbnailView->GetInternalView() ? EAssetColumns::eAssetColumns_Thumbnail : EAssetColumns::eAssetColumns_Name;
+		QModelIndex index;
+		if (QtUtil::MapFromSourceIndirect(pView, sourceIndex.sibling(sourceIndex.row(), column), index))
+		{
+			m_pSelection->setCurrentIndex(index, QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
+			pView->edit(index);
+		}
+		return;
 	}
+
+	// folders view.
+
+	QWidget* pWidget = QApplication::focusWidget();
+	if (pWidget != m_pFoldersView->GetInternalView())
+	{
+		return;
+	}
+	m_pFoldersView->RenameFolder(sourceIndex);
 }
 
 void CAssetBrowser::OnCreateFolder(const QString& parentFolder)

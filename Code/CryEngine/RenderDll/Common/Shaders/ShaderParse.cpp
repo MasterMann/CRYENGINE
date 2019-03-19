@@ -169,8 +169,6 @@ SShaderGenBit* CShaderMan::mfCompileShaderGenProperty(char* scr)
 
 				if (!stricmp(data, "$HW_WaterTessellation"))
 					shgm->m_nDependencySet |= SHGD_HW_WATER_TESSELLATION;
-				else if (!stricmp(data, "$HW_SilhouettePom"))
-					shgm->m_nDependencySet |= SHGD_HW_SILHOUETTE_POM;
 				else if (!stricmp(data, "$UserEnabled"))
 					shgm->m_nDependencySet |= SHGD_USER_ENABLED;
 				else if (!stricmp(data, "$HW_DURANGO"))
@@ -255,8 +253,6 @@ SShaderGenBit* CShaderMan::mfCompileShaderGenProperty(char* scr)
 
 				if (!stricmp(data, "$HW_WaterTessellation"))
 					shgm->m_nDependencyReset |= SHGD_HW_WATER_TESSELLATION;
-				else if (!stricmp(data, "$HW_SilhouettePom"))
-					shgm->m_nDependencyReset |= SHGD_HW_SILHOUETTE_POM;
 				else if (!stricmp(data, "$UserEnabled"))
 					shgm->m_nDependencyReset |= SHGD_USER_ENABLED;
 				else if (!stricmp(data, "$HW_DX11"))
@@ -350,7 +346,6 @@ string CShaderMan::mfGetShaderBitNamesFromMaskGen(const char* szFileName, uint64
 	string pszShaderName = PathUtil::GetFileName(szFileName);
 	pszShaderName.MakeUpper();
 
-	uint64 nMaskGenRemaped = 0;
 	ShaderMapNameFlagsItor pShaderRmp = m_pShadersGlobalFlags.find(pszShaderName.c_str());
 	if (pShaderRmp == m_pShadersGlobalFlags.end() || !pShaderRmp->second)
 		return "NO_FLAGS";
@@ -403,8 +398,6 @@ void CShaderMan::mfRemapShaderGenInfoBits(const char* szName, SShaderGen* pShGen
 		MapNameFlagsItor pRemaped = m_pShaderCommonGlobalFlag.find(pGenBit->m_ParamName.c_str());
 		if (pRemaped != m_pShaderCommonGlobalFlag.end())
 			pGenBit->m_Mask = pRemaped->second;
-
-		int test = 2;
 	}
 }
 
@@ -508,7 +501,7 @@ uint64 CShaderMan::mfGetRemapedShaderMaskGen(const char* szName, uint64 nMaskGen
 				// found match - enable bit for remapped mask
 				if ((pIter->second) & nMask)
 				{
-					const char* pFlagName = pIter->first.c_str();
+					//const char* pFlagName = pIter->first.c_str();
 					MapNameFlagsItor pMatchIter = m_pShaderCommonGlobalFlag.find(pIter->first);
 					if (pMatchIter != m_pShaderCommonGlobalFlag.end())
 					{

@@ -3,6 +3,7 @@
 #pragma once
 
 #include "ParticleCommon.h"
+#include "ParticleDataTypes.h"
 #include "Features/ParamTraits.h"
 #include <CryRenderer/IGpuParticles.h>
 #include <CryCore/Dispatcher.h>
@@ -14,18 +15,18 @@ class CParticleEmitter;
 class CParticleComponent;
 struct SComponentParams;
 class CParticleComponentRuntime;
-struct SInstance;
+struct SSpawnerDesc;
 
 enum EFeatureType
 {
 	EFT_Generic = 0,          // this feature does nothing in particular. Can have many of this per component.
-	EFT_Spawn   = BIT(0),     // this feature spawns particles. At least one is needed in a component.
-	EFT_Life    = BIT(1),     // this feature changes particles life time. At least one is required per component.
+	EFT_Life    = BIT(0),     // this feature changes particles life time. At least one is required per component.
+	EFT_Spawn   = BIT(1),     // this feature spawns particles. At least one is needed in a component.
 	EFT_Render  = BIT(2),     // this feature renders particles. Each component can only have either none or just one of this.
-	EFT_Effect  = BIT(3),     // this feature renders particles. Each component can only have either none or just one of this.
+	EFT_Effect  = BIT(3),     // this feature creates non-rendering effects.
 	EFT_Size    = BIT(4),     // this feature changes particles sizes. At least one is required per component.
 	EFT_Motion  = BIT(5),     // this feature moves particles around. Each component can only have either none or just one of this.
-	EFT_Child   = BIT(6),     // this feature spawns instances from parent particles. At least one is needed for child components
+	EFT_Child   = BIT(6),     // this feature creates spawners from parent particles. At least one is needed for child components
 
 	EFT_END     = BIT(7)
 };
@@ -57,23 +58,22 @@ public:
 	virtual void              AddToComponent(CParticleComponent* pComponent, SComponentParams* pParams) {}
 	virtual EFeatureType      GetFeatureType()                                                          { return EFT_Generic; }
 	virtual bool              CanMakeRuntime(CParticleEmitter* pEmitter) const                          { return true; }
+	virtual void              LoadResources(CParticleComponent& component)                              {}
 
-	// Runtime and instance initialization
+	// Runtime and spawner initialization
 	virtual void OnEdit(CParticleComponentRuntime& runtime) {}
 
 	virtual void OnPreRun(CParticleComponentRuntime& runtime) {}
 
+	virtual void GetDynamicData(const CParticleComponentRuntime& runtime, EParticleDataType type, void* data, EDataDomain domain, SUpdateRange range) {}
+
 	virtual void MainPreUpdate(CParticleComponentRuntime& runtime) {}
 
-	virtual void AddSubInstances(CParticleComponentRuntime& runtime, TDynArray<SInstance>& instances) {}
+	virtual void UpdateSpawners(CParticleComponentRuntime& runtime) {}
 
-	virtual void CullSubInstances(CParticleComponentRuntime& runtime, TDynArray<SInstance>& instances) {}
+	virtual void CullSpawners(CParticleComponentRuntime& runtime, TVarArray<SSpawnerDesc>& spawners) {}
 
-	virtual void InitSubInstances(CParticleComponentRuntime& runtime, SUpdateRange instanceRange) {}
-
-	virtual void GetSpatialExtents(const CParticleComponentRuntime& runtime, TConstArray<float> scales, TVarArray<float> extents) {}
-
-	virtual void GetEmitOffsets(const CParticleComponentRuntime& runtime, TVarArray<Vec3> offsets, uint firstInstance) {}
+	virtual void InitSpawners(CParticleComponentRuntime& runtime) {}
 
 	// Particle initialization
 	virtual void KillParticles(CParticleComponentRuntime& runtime) {}
@@ -113,38 +113,40 @@ private:
 	_smart_ptr<gpu_pfx2::IParticleFeature> m_gpuInterface;
 };
 
-template<class... Args> using TFeatureDispatcher = Dispatcher<CParticleFeature, Args...>;
+#define FEATURE_DISPATCHER(Function) \
+	struct Call##Function { \
+		template<class... Args> static void call(CParticleFeature* obj, Args&&... args) { obj->Function(std::forward<Args>(args)...); } \
+	}; CallDispatcher<CParticleFeature, Call##Function> Function;
 
 struct SFeatureDispatchers
 {
-	TFeatureDispatcher<CParticleComponentRuntime&> OnEdit { &CParticleFeature::OnEdit };
-	TFeatureDispatcher<CParticleComponentRuntime&> OnPreRun { &CParticleFeature::OnPreRun };
-	TFeatureDispatcher<CParticleComponentRuntime&> MainPreUpdate { &CParticleFeature::MainPreUpdate };
+	FEATURE_DISPATCHER(LoadResources);
+	FEATURE_DISPATCHER(OnEdit);
+	FEATURE_DISPATCHER(OnPreRun);
+	FEATURE_DISPATCHER(MainPreUpdate);
+	FEATURE_DISPATCHER(GetDynamicData);
 
-	TFeatureDispatcher<CParticleComponentRuntime&, TDynArray<SInstance>&> AddSubInstances { &CParticleFeature::AddSubInstances };
-	TFeatureDispatcher<CParticleComponentRuntime&, TDynArray<SInstance>&> CullSubInstances { &CParticleFeature::CullSubInstances };
-	TFeatureDispatcher<CParticleComponentRuntime&, SUpdateRange> InitSubInstances { &CParticleFeature::InitSubInstances };
-	TFeatureDispatcher<CParticleComponentRuntime&> KillParticles { &CParticleFeature::KillParticles };
-	TFeatureDispatcher<CParticleComponentRuntime&> SpawnParticles { &CParticleFeature::SpawnParticles };
+	FEATURE_DISPATCHER(UpdateSpawners);
+	FEATURE_DISPATCHER(CullSpawners);
+	FEATURE_DISPATCHER(InitSpawners);
+	FEATURE_DISPATCHER(KillParticles);
+	FEATURE_DISPATCHER(SpawnParticles);
 
-	TFeatureDispatcher<const CParticleComponentRuntime&, TConstArray<float>, TVarArray<float>> GetSpatialExtents { &CParticleFeature::GetSpatialExtents };
-	TFeatureDispatcher<const CParticleComponentRuntime&, TVarArray<Vec3>, uint> GetEmitOffsets { &CParticleFeature::GetEmitOffsets };
+	FEATURE_DISPATCHER(PreInitParticles);
+	FEATURE_DISPATCHER(InitParticles);
+	FEATURE_DISPATCHER(PostInitParticles);
+	FEATURE_DISPATCHER(PastUpdateParticles);
+	FEATURE_DISPATCHER(DestroyParticles);
 
-	TFeatureDispatcher<CParticleComponentRuntime&> PreInitParticles { &CParticleFeature::PreInitParticles };
-	TFeatureDispatcher<CParticleComponentRuntime&> InitParticles { &CParticleFeature::InitParticles };
-	TFeatureDispatcher<CParticleComponentRuntime&> PostInitParticles { &CParticleFeature::PostInitParticles };
-	TFeatureDispatcher<CParticleComponentRuntime&> PastUpdateParticles { &CParticleFeature::PastUpdateParticles };
-	TFeatureDispatcher<CParticleComponentRuntime&> DestroyParticles { &CParticleFeature::DestroyParticles };
+	FEATURE_DISPATCHER(PreUpdateParticles);
+	FEATURE_DISPATCHER(UpdateParticles);
+	FEATURE_DISPATCHER(PostUpdateParticles);
 
-	TFeatureDispatcher<CParticleComponentRuntime&> PreUpdateParticles { &CParticleFeature::PreUpdateParticles };
-	TFeatureDispatcher<CParticleComponentRuntime&> UpdateParticles { &CParticleFeature::UpdateParticles };
-	TFeatureDispatcher<CParticleComponentRuntime&> PostUpdateParticles { &CParticleFeature::PostUpdateParticles };
+	FEATURE_DISPATCHER(UpdateGPUParams);
 
-	TFeatureDispatcher<CParticleComponentRuntime&, gpu_pfx2::SUpdateParams&> UpdateGPUParams { &CParticleFeature::UpdateGPUParams };
-
-	TFeatureDispatcher<CParticleComponentRuntime&, const SRenderContext&> Render { &CParticleFeature::Render };
-	TFeatureDispatcher<const CParticleComponentRuntime&, const SRenderContext&> RenderDeferred { &CParticleFeature::RenderDeferred };
-	TFeatureDispatcher<const CParticleComponentRuntime&, const SCameraInfo&, CREParticle*, uint64, float> ComputeVertices { &CParticleFeature::ComputeVertices };
+	FEATURE_DISPATCHER(Render);
+	FEATURE_DISPATCHER(RenderDeferred);
+	FEATURE_DISPATCHER(ComputeVertices);
 };
 
 ILINE ColorB HexToColor(uint hex)

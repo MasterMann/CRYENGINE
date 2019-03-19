@@ -101,7 +101,6 @@ add_sources("CrySystem_uber_0.cpp"
 	SOURCE_GROUP "Header Files"
 		"SystemInit.h"
 		"Statistics/LocalMemoryUsage.h"
-		"MemoryFragmentationProfiler.h"
 		"XML/ReadWriteXMLSink.h"
 		"Serialization/ArchiveHost.h"
 		"PlatformOS/PatternMatcher.h"
@@ -496,6 +495,8 @@ add_sources("CrySystem_uber_1.cpp"
 add_sources("CrySystem_uber_7.cpp"
 	PROJECTS CrySystem
 	SOURCE_GROUP "PlatformOS"
+		"PlatformOS/PlatformOSUserManager_Durango.h"
+		"PlatformOS/PlatformOSUserManager_Durango.cpp"
 		"PlatformOS/StreamingInstall_Durango.h"
 		"PlatformOS/StreamingInstall_Durango.cpp"
 		"PlatformOS/SaveReaderWriter_Durango.h"
@@ -517,8 +518,11 @@ end_sources()
 #END-FILE-LIST
 
 MACRO(setup_crysystem)
-	target_link_libraries( ${THIS_PROJECT} PRIVATE zlib expat lz4 md5 tomcrypt )
+	target_link_libraries( ${THIS_PROJECT} PRIVATE zlib expat lz4 md5 )
 	use_scaleform()
+	if (NOT DURANGO)
+		target_link_libraries( ${THIS_PROJECT} PRIVATE tomcrypt )
+	endif()
 
 	if (WINDOWS)
 		set_property(TARGET ${THIS_PROJECT} APPEND_STRING PROPERTY LINK_FLAGS " /NODEFAULTLIB:libcmt.lib /NODEFAULTLIB:libcpmt.lib")
@@ -544,7 +548,6 @@ MACRO(setup_crysystem)
 
 	if (ORBIS OR CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
 		target_compile_options(${THIS_PROJECT} PRIVATE
-			-Wno-unused-variable
 			-Wno-array-bounds
 			-Wno-parentheses
 			-Wno-reorder
@@ -569,7 +572,6 @@ MACRO(setup_crysystem)
 			-Wno-unused-function
 			-Wno-unused-value
 			-Wno-array-bounds
-			-Wno-unused-variable
 			-Wno-sign-compare
 			-Wno-ignored-attributes
 			-Wno-int-in-bool-context

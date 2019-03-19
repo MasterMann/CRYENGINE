@@ -42,11 +42,60 @@ void AddDirectorysContent(const QString& dirPath, std::vector<string>& result, i
 	}
 }
 
+// Goes through a directory (and it's sub-directories) and calls a callback function.
+// Commonly used for copying/moving files
+// @param szSource source file or directory to be moved
+// @param szDestination destination directory where it should be moved to
+// @param callback function with parameters for source and destination paths for a given file or folder
+bool TraverseDirectoryAndExecute(const char* szSource, const char* szDestination, std::function<bool(const char*, const char*)> callback)
+{
+	QFileInfo sourceFileInfo(szSource);
+	if (sourceFileInfo.isDir())
+	{
+		QDir sourceDir(szSource);
+		if (!sourceDir.exists())
+		{
+			CryWarning(VALIDATOR_MODULE_EDITOR, VALIDATOR_WARNING, "FileUtils: Source directory does not exist: %s", szSource);
+			return false;
+		}
+
+		string newDestination;
+		newDestination.Format("%s/%s", szDestination, QtUtil::ToString(sourceDir.dirName()));
+
+		if (!callback(szSource, newDestination.c_str()))
+			return false;
+
+		QFileInfoList infoList = sourceDir.entryInfoList(QDir::AllDirs | QDir::Files | QDir::NoDotAndDotDot);
+		for (const QFileInfo& fileInfo : infoList)
+		{
+			string fileName = QtUtil::ToString(fileInfo.fileName());
+			string source;
+			source.Format("%s/%s", szSource, fileName.c_str());
+			if (!TraverseDirectoryAndExecute(source.c_str(), newDestination.c_str(), callback))
+				return false;
+		}
+	}
+	else
+	{
+		string newDestination;
+		string fileName = QtUtil::ToString(sourceFileInfo.fileName());
+		newDestination.Format("%s/%s", szDestination, fileName.c_str());
+
+		// Make sure destination directory exists
+		QFileInfo destinationFileInfo(newDestination.c_str());
+		QDir toDir(destinationFileInfo.absolutePath());
+		toDir.mkpath(destinationFileInfo.absolutePath());
+
+		return callback(szSource, newDestination.c_str());
+	}
+
+	return true;
+}
+
 } // namespace Private_FileUtils
 
 namespace FileUtils
 {
-
 bool RemoveFile(const char* szFilePath)
 {
 	return QFile::remove(szFilePath);
@@ -84,6 +133,131 @@ bool CopyFileAllowOverwrite(const char* szSourceFilePath, const char* szDestinat
 
 	// Try to overwrite existing file.
 	return QFile::remove(szDestinationFilePath) && QFile::copy(szSourceFilePath, szDestinationFilePath);
+}
+
+bool CopyDirectory(const char* szSource, const char* szDestination)
+{
+	// Recurse directory will process source and destination to map to files and folders within the root source to the final destination
+	return Private_FileUtils::TraverseDirectoryAndExecute(szSource, szDestination, [](const char* szSource, const char* szDestination)
+	{
+		QFileInfo sourceFileInfo(szSource);
+		if (sourceFileInfo.isDir())
+		{
+			// Ensure the destination directory exists
+			QDir toDir(szDestination);
+			toDir.mkpath(toDir.absolutePath());
+		}
+		else
+		{
+			// Don't replace any existing files
+			if (QFile::exists(szDestination))
+				return true;
+
+			return QFile::copy(szSource, szDestination);
+		}
+
+		return true;
+	});
+}
+
+bool CopyDirectoryContents(const char* szSource, const char* szDestination)
+{
+	QDir fromDir(szSource);
+	if (!fromDir.exists())
+		return false;
+
+	QFileInfoList infoList = fromDir.entryInfoList(QDir::AllDirs | QDir::Files | QDir::NoDotAndDotDot);
+	for (const QFileInfo& fileInfo : infoList)
+	{
+		string fileName = QtUtil::ToString(fileInfo.fileName());
+
+		if (!CopyDirectory(PathUtil::Make(szSource, fileName.c_str()), szDestination))
+			return false;
+	}
+
+	return true;
+}
+
+bool CopyFiles(const char* szSource, const char* szDestination)
+{
+	QDir fromDir(szSource);
+	if (!fromDir.exists())
+		return false;
+
+	QFileInfoList infoList = fromDir.entryInfoList(QDir::Files | QDir::NoDotAndDotDot);
+	for (const QFileInfo& fileInfo : infoList)
+	{
+		string fileName = QtUtil::ToString(fileInfo.fileName());
+
+		if (!CopyDirectory(PathUtil::Make(szSource, fileName.c_str()), szDestination))
+			return false;
+	}
+
+	return true;
+}
+
+bool MoveDirectory(const char* szSource, const char* szDestination)
+{
+	// Recurse directory will process source and destination to map to files and folders within the root source to the final destination
+	return Private_FileUtils::TraverseDirectoryAndExecute(szSource, szDestination, [](const char* szSource, const char* szDestination)
+	{
+		QFileInfo sourceFileInfo(szSource);
+		if (sourceFileInfo.isDir())
+		{
+			// Ensure the destination directory exists
+			QDir toDir(szDestination);
+			toDir.mkpath(toDir.absolutePath());
+		}
+		else
+		{
+			// QFile::rename will fail if destination file exists already
+			if (QFile::exists(szDestination))
+				return true;
+
+			QFile sourceFile(szSource);
+			return sourceFile.rename(szDestination);
+		}
+
+		return true;
+	});
+}
+
+bool MoveDirectoryContents(const char* szSource, const char* szDestination)
+{
+	QDir fromDir(szSource);
+	if (!fromDir.exists())
+		return false;
+
+	QFileInfoList infoList = fromDir.entryInfoList(QDir::AllDirs | QDir::Files | QDir::NoDotAndDotDot);
+	for (const QFileInfo& fileInfo : infoList)
+	{
+		string fileName = QtUtil::ToString(fileInfo.fileName());
+		string source;
+		source.Format("%s/%s", szSource, fileName.c_str());
+		if (!MoveDirectory(source.c_str(), szDestination))
+			return false;
+	}
+
+	return true;
+}
+
+bool MoveFiles(const char* szSource, const char* szDestination)
+{
+	QDir fromDir(szSource);
+	if (!fromDir.exists())
+		return false;
+
+	QFileInfoList infoList = fromDir.entryInfoList(QDir::Files | QDir::NoDotAndDotDot);
+	for (const QFileInfo& fileInfo : infoList)
+	{
+		string fileName = QtUtil::ToString(fileInfo.fileName());
+		string source;
+		source.Format("%s/%s", szSource, fileName.c_str());
+		if (!MoveDirectory(source.c_str(), szDestination))
+			return false;
+	}
+
+	return true;
 }
 
 bool RemoveDirectory(const char* szPath, bool bRecursive /* = true*/)
@@ -201,20 +375,14 @@ std::vector<string> GetDirectorysContent(const QString& dirPath, int depthLevel 
 	return result;
 }
 
-
 bool Pak::IsFileInPakOnly(const string& path)
 {
-	ICryPak* const pPak  = GetISystem()->GetIPak();
-	if (pPak->IsAbsPath(path))
-	{
-		return !FileExists(path) && GetISystem()->GetIPak()->IsFileExist(PathUtil::AbsolutePathToGamePath(path), ICryPak::eFileLocation_InPak);
-	}
+	return !FileExists(path) && GetISystem()->GetIPak()->IsFileExist(PathUtil::ToGamePath(path), ICryPak::eFileLocation_InPak);;
+}
 
-	// Resolve aliases, e.g. %engine%
-	char szAdjustedPath[ICryPak::g_nMaxPath];
-	pPak->AdjustFileName(path.c_str(), szAdjustedPath, ICryPak::FLAGS_FOR_WRITING | ICryPak::FLAGS_PATH_REAL);
-
-	return !FileExists(szAdjustedPath) && GetISystem()->GetIPak()->IsFileExist(path, ICryPak::eFileLocation_InPak);
+bool Pak::IsFileInPakOrOnDisk(const string& path)
+{
+	return GetISystem()->GetIPak()->IsFileExist(PathUtil::ToGamePath(path));
 }
 
 EDITOR_COMMON_API bool Pak::CompareFiles(const string& filePath1, const string& filePath2)
@@ -280,8 +448,6 @@ EDITOR_COMMON_API void BackupFile(const char* szFilePath)
 
 EDITOR_COMMON_API bool Pak::CopyFileAllowOverwrite(const char* szSourceFilePath, const char* szDestinationFilePath)
 {
-	GetISystem()->GetIPak()->MakeDir(PathUtil::GetDirectory(szDestinationFilePath));
-
 	ICryPak* const pPak = GetISystem()->GetIPak();
 	FILE* pFile = pPak->FOpen(szSourceFilePath, "rbx");
 	if (!pFile)
@@ -293,11 +459,16 @@ EDITOR_COMMON_API bool Pak::CopyFileAllowOverwrite(const char* szSourceFilePath,
 	const size_t numberOfBytesRead = pPak->FReadRawAll(buffer.data(), buffer.size(), pFile);
 	pPak->FClose(pFile);
 	if (numberOfBytesRead != buffer.size())
-	{ 
+	{
 		return false;
 	}
 
-	QFile destFile(QtUtil::ToQString(szDestinationFilePath));
+	char szAdjustedPath[ICryPak::g_nMaxPath];
+	pPak->AdjustFileName(szDestinationFilePath, szAdjustedPath, ICryPak::FLAGS_FOR_WRITING);
+
+	GetISystem()->GetIPak()->MakeDir(PathUtil::GetDirectory(szAdjustedPath));
+
+	QFile destFile(QtUtil::ToQString(szAdjustedPath));
 	if (!destFile.open(QIODevice::WriteOnly | QIODevice::Truncate))
 	{
 		return false;

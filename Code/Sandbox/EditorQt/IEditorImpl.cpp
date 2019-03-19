@@ -66,6 +66,7 @@
 #include <ConfigurationManager.h>
 #include <EditorCommonInit.h>
 #include <EditorFramework/BroadcastManager.h>
+#include <EditorFramework/EditorToolBarService.h>
 #include <EditorFramework/PersonalizationManager.h>
 #include <EditorFramework/Preferences.h>
 #include <EditorFramework/TrayArea.h>
@@ -129,6 +130,7 @@ CEditorImpl::CEditorImpl(CGameEngine* ge)
 	m_pGlobalBroadcastManager = new CBroadcastManager;
 	m_pNotificationCenter = new CNotificationCenter;
 	m_pTrayArea = new CTrayArea;
+	m_pEditorToolBarService = new CEditorToolBarService;
 	m_pCommandManager = new CEditorCommandManager;
 	m_pPersonalizationManager = new CPersonalizationManager;
 	m_pPreferences = new CPreferences;
@@ -263,6 +265,7 @@ CEditorImpl::~CEditorImpl()
 	SAFE_DELETE(m_pPreferences)
 	SAFE_DELETE(m_pPersonalizationManager)
 	SAFE_DELETE(m_pCommandManager)
+	SAFE_DELETE(m_pEditorToolBarService)
 	SAFE_DELETE(m_pTrayArea)
 	SAFE_DELETE(m_pNotificationCenter)
 	SAFE_DELETE(m_pPythonManager)
@@ -683,7 +686,6 @@ bool CEditorImpl::StartObjectCreation(const char* type, const char* file /*= nul
 
 CBaseObject* CEditorImpl::GetSelectedObject()
 {
-	CBaseObject* obj = 0;
 	if (m_pObjectManager->GetSelection()->GetCount() != 1)
 		return 0;
 	return m_pObjectManager->GetSelection()->GetObject(0);
@@ -1180,7 +1182,7 @@ Cry::IProjectManager* CEditorImpl::GetProjectManager()
 	return m_pSystem->GetIProjectManager();
 }
 
-bool CEditorImpl::IsSourceControlAvailable() 
+bool CEditorImpl::IsSourceControlAvailable()
 {
 	if (gEditorGeneralPreferences.enableSourceControl() && GetSourceControl())
 		return true;

@@ -11,12 +11,10 @@ add_sources("CryAudioSystem_uber_0.cpp"
 		"CVars.h"
 		"Debug.h"
 		"Entity.h"
-		"Event.h"
 		"EventListenerManager.h"
-		"EventManager.h"
+		"File.h"
 		"FileCacheManager.h"
-		"FileEntry.h"
-		"FileManager.h"
+		"GlobalObject.h"
 		"Impl.h"
 		"Listener.h"
 		"ListenerManager.h"
@@ -24,31 +22,30 @@ add_sources("CryAudioSystem_uber_0.cpp"
 		"MainThread.h"
 		"Managers.h"
 		"Object.h"
-		"ObjectManager.h"
 		"ObjectRequestData.h"
 		"PropagationProcessor.h"
 		"RayInfo.h"
 		"Request.h"
 		"RequestData.h"
 		"resource.h"
-		"StandaloneFile.h"
 		"System.h"
 		"SystemRequestData.h"
 		"XMLProcessor.h"
 	SOURCE_GROUP "Header Files\\\\Controls"
 		"Environment.h"
 		"Parameter.h"
+		"PreloadRequest.h"
 		"Setting.h"
 		"Switch.h"
 		"SwitchState.h"
 		"Trigger.h"
+		"TriggerInstance.h"
+		"TriggerUtils.h"
 	SOURCE_GROUP "Header Files\\\\DefaultControls"
-		"DefaultTriggerUtils.h"
 		"GetFocusTrigger.h"
 		"LoseFocusTrigger.h"
 		"MuteAllTrigger.h"
 		"PauseAllTrigger.h"
-		"PreloadRequest.h"
 		"PreviewTrigger.h"
 		"ResumeAllTrigger.h"
 		"UnmuteAllTrigger.h"
@@ -56,19 +53,15 @@ add_sources("CryAudioSystem_uber_0.cpp"
 		"Common.cpp"
 		"CryAudioSystem.cpp"
 		"CVars.cpp"
-		"Debug.cpp"
-		"Event.cpp"
 		"EventListenerManager.cpp"
-		"EventManager.cpp"
 		"FileCacheManager.cpp"
-		"FileManager.cpp"
+		"GlobalObject.cpp"
 		"Impl.cpp"
 		"Listener.cpp"
 		"ListenerManager.cpp"
 		"MainThread.cpp"
 		"Managers.cpp"
 		"Object.cpp"
-		"ObjectManager.cpp"
 		"PropagationProcessor.cpp"
 		"RequestData.cpp"
 		"System.cpp"
@@ -76,17 +69,18 @@ add_sources("CryAudioSystem_uber_0.cpp"
 	SOURCE_GROUP "Source Files\\\\Controls"
 		"Environment.cpp"
 		"Parameter.cpp"
+		"PreloadRequest.cpp"
 		"Setting.cpp"
 		"Switch.cpp"
 		"SwitchState.cpp"
 		"Trigger.cpp"
+		"TriggerInstance.cpp"
+		"TriggerUtils.cpp"
 	SOURCE_GROUP "Source Files\\\\DefaultControls"
-		"DefaultTriggerUtils.cpp"
 		"GetFocusTrigger.cpp"
 		"LoseFocusTrigger.cpp"
 		"MuteAllTrigger.cpp"
 		"PauseAllTrigger.cpp"
-		"PreloadRequest.cpp"
 		"PreviewTrigger.cpp"
 		"ResumeAllTrigger.cpp"
 		"UnmuteAllTrigger.cpp"
@@ -108,46 +102,33 @@ MACRO(setup_cryaudio)
 	endif()
 	if (ORBIS OR CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
 		target_compile_options(${THIS_PROJECT} PRIVATE
-			-Wno-unknown-pragmas
-			-Wno-reorder
-			-Wno-parentheses
 			-Wno-format
-			-Wno-switch
-			-Wno-unused-value
-			-Wno-comment
-			-Wno-empty-body
-			-Wno-format-security
-			-Wno-unused-function
 			-Wno-multichar
+			-Wno-parentheses
+			-Wno-unknown-pragmas
+			-Wno-unused-function
 			-Wno-unused-private-field
 		)
     elseif(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
 		target_compile_options(${THIS_PROJECT} PRIVATE
-			-Wno-unused-function
-			-Wno-unused-value
-			-Wno-sign-compare
-			-Wno-ignored-attributes
-			-Wno-invalid-offsetof
-			-Wno-aligned-new
-			-Wno-int-in-bool-context
-			-Wno-unused-but-set-variable
-			-Wno-misleading-indentation
-			-Wno-unknown-pragmas
-			-Wno-strict-aliasing
-			-Wno-maybe-uninitialized
-			-Wno-multichar
-			-Wno-char-subscripts
-			-Wno-conversion-null
-			-Wno-parentheses
-			-Wno-comment
-			-Wno-reorder
-			-Wno-address
 			-Wno-format
-			-Wno-switch
+			-Wno-maybe-uninitialized
+			-Wno-misleading-indentation
+			-Wno-multichar
+			-Wno-parentheses
+			-Wno-sign-compare
+			-Wno-strict-aliasing
+			-Wno-unknown-pragmas
+			-Wno-unused-but-set-variable
+			-Wno-unused-function
 		)
     endif()
 
-		target_compile_definitions(${THIS_PROJECT} PRIVATE $<$<NOT:$<CONFIG:Release>>:INCLUDE_AUDIO_PRODUCTION_CODE> $<$<NOT:$<CONFIG:Release>>:ENABLE_AUDIO_LOGGING>)
+		target_compile_definitions(${THIS_PROJECT} PRIVATE $<$<NOT:$<CONFIG:Release>>:CRY_AUDIO_USE_DEBUG_CODE>)
+
+		IF(AUDIO_USE_OCCLUSION)
+			target_compile_definitions(${THIS_PROJECT} PRIVATE -DCRY_AUDIO_USE_OCCLUSION)
+		ENDIF()
 ENDMACRO()
 
 CryEngineModule(CryAudioSystem PCH "stdafx.cpp" SOLUTION_FOLDER "CryEngine/Audio")

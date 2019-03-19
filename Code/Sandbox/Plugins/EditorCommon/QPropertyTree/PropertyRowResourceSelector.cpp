@@ -41,7 +41,8 @@ public:
 		entry_->setText(initialValue_);
 		entry_->selectAll();
 		QObject::connect(entry_.data(), &QLineEdit::editingFinished, this, &InplaceWidgetResource::onEditingFinished);
-		connect(entry_.data(), &QLineEdit::textChanged, this, [this, tree] {
+		connect(entry_.data(), &QLineEdit::textChanged, this, [this, tree]
+		{
 			QFontMetrics fm(entry_->font());
 			int contentWidth = min((int)fm.width(entry_->text()) + 8, tree->width() - entry_->x());
 			if (contentWidth > entry_->width())
@@ -115,7 +116,6 @@ PropertyRowResourceSelector::PropertyRowResourceSelector()
 property_tree::InplaceWidget* PropertyRowResourceSelector::createWidget(PropertyTree* tree)
 {
 	int buttonsWidth = buttonCount() * 16;
-	int iconSpace = buttonsWidth ? buttonsWidth + 2 : 0;
 	int widgetWidth = max(16, widgetRect(tree).width() - buttonsWidth - 2);
 
 	context_.typeName = type_.c_str();
@@ -130,12 +130,12 @@ property_tree::InplaceWidget* PropertyRowResourceSelector::createWidget(Property
 void PropertyRowResourceSelector::setValue(PropertyTree* tree, const char* str, const void* handle, const yasli::TypeID& type)
 {
 	CRY_ASSERT(selector_);
-	
+
 	context_.typeName = type_.c_str();
-	QPropertyTree* qtree = static_cast<QPropertyTree*>(tree);
-	context_.parentWidget = qtree;
-	dll_string validatedPath = selector_->ValidateValue(context_, str, value_.c_str());
-	value_ = validatedPath.c_str();
+	QPropertyTree* pPropertyTree = static_cast<QPropertyTree*>(tree);
+	context_.parentWidget = pPropertyTree;
+	SResourceValidationResult validatedPath = selector_->ValidateValue(context_, str, value_.c_str());
+	value_ = validatedPath.validatedResource.c_str();
 	serializer_.setPointer((void*)handle);
 	serializer_.setType(type);
 }
@@ -251,9 +251,9 @@ int PropertyRowResourceSelector::buttonCount() const
 	if (!provider_)
 	{
 		CRY_ASSERT(selector_);
-		
+
 		int btns = 1;
-		
+
 		if (selector_->CanEdit())
 			++btns;
 
@@ -285,12 +285,12 @@ bool PropertyRowResourceSelector::onActivateButton(int button, const PropertyAct
 	case BUTTON_EDIT:
 		return editResource(e.tree);
 	case BUTTON_PICK_LEGACY:
-	{
-		context_.useLegacyPicker = true;
-		const bool res = pickResource(e.tree);
-		context_.useLegacyPicker = false;
-		return res;
-	}
+		{
+			context_.useLegacyPicker = true;
+			const bool res = pickResource(e.tree);
+			context_.useLegacyPicker = false;
+			return res;
+		}
 	default:
 		return false;
 	}
@@ -351,40 +351,37 @@ bool PropertyRowResourceSelector::pickResource(PropertyTree* tree)
 	}
 	CScopedVariableSetter<bool> state(bActive_, true);
 
+	//Called every time a new resource is selected in the asset selector
 	auto setValue = [this, tree](const char* filename)
-	{
-		tree->model()->rowAboutToBeChanged(this);
-		value_ = filename;
-		tree->model()->rowChanged(this);
-	};
-
-	auto setValueCallback = [setValue](const char* filename)
-	{
-		GetIEditor()->GetIUndoManager()->Suspend();
-		setValue(filename);
-		GetIEditor()->GetIUndoManager()->Resume();
-	};
+									{
+										value_ = filename;
+										//Will cause property tree to apply and revert this row (aka changes will be applied) but will not submit and end undo action
+										tree->model()->rowContinuouslyChanged(this);
+									};
 
 	ResourceSelectionCallback callback;
-	callback.SetValueChangedCallback(setValueCallback);
+	callback.SetValueChangedCallback(setValue);
 	context_.callback = &callback;
 
 	context_.typeName = type_.c_str();
-	QPropertyTree* qtree = static_cast<QPropertyTree*>(tree);
-	context_.parentWidget = qtree;
+	QPropertyTree* pPropertyTree = static_cast<QPropertyTree*>(tree);
+	context_.parentWidget = pPropertyTree;
 
 	const string previousValue = value_;
-	dll_string filename = selector_->SelectResource(context_, previousValue.c_str());
+	//Notify model (and subsequently the tree) that this row is about to change, this usually triggers an undo begin and record on the items being changed
+	tree->model()->rowAboutToBeChanged(this);
+	SResourceSelectionResult result = selector_->SelectResource(context_, previousValue.c_str());
 
-	if (value_ != previousValue)
+	if (result.selectionAccepted && previousValue != result.selectedResource.c_str())
 	{
-		// If an intermediate value has been set, we revert that change. Otherwise, undo gets confused.
-		setValueCallback(previousValue);
+		setValue(result.selectedResource.c_str());
+		//!Confirm that the row changed and accept the undo (aka place it in the undo history)
+		tree->model()->rowChanged(this, true, true);
 	}
-	
-	if (previousValue != filename.c_str())
+	else
 	{
-		setValue(filename.c_str());
+		//!Rollback this row change and revert the undo (aka call the Undo() function on the undo object)
+		tree->model()->rowChanged(this, true, false);
 	}
 
 	return true;
@@ -395,7 +392,6 @@ bool PropertyRowResourceSelector::createFile(PropertyTree* tree)
 	if (!provider_)
 		return false;
 
-	QPropertyTree* qtree = static_cast<QPropertyTree*>(tree);
 	QString title;
 	if (labelUndecorated())
 		title = QString("Create file for '") + labelUndecorated() + "'";

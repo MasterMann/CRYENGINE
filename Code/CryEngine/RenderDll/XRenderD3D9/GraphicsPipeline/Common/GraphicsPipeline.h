@@ -42,15 +42,15 @@ public:
 	virtual void Init() = 0;
 	virtual void Resize(int renderWidth, int renderHeight);
 	// Prepare all stages before actual drawing starts
-	virtual void Update(CRenderView* pRenderView, EShaderRenderingFlags renderingFlags);
-	virtual void OnCVarsChanged(CCVarUpdateRecorder& rCVarRecs);
+	virtual void Update(EShaderRenderingFlags renderingFlags);
+	virtual void OnCVarsChanged(const CCVarUpdateRecorder& rCVarRecs);
 	// Execute the pipeline and its stages
 	virtual void Execute() = 0;
 
 	virtual void ShutDown();
 
-	virtual size_t GetViewInfoCount() const                      { return 0; };
-	virtual size_t GenerateViewInfo(SRenderViewInfo viewInfo[2]) { return 0; };
+	virtual size_t GetViewInfoCount() const                      { return 0; }
+	virtual size_t GenerateViewInfo(SRenderViewInfo viewInfo[2]) { return 0; }
 
 public:
 	// Helper methods

@@ -2,23 +2,17 @@
 
 #pragma once
 
-#include <IEvent.h>
-#include <SharedData.h>
+#include <ITriggerConnection.h>
 #include <PoolObject.h>
 #include <AK/SoundEngine/Common/AkTypes.h>
-#include <atomic>
 
 namespace CryAudio
 {
-class CEvent;
-
 namespace Impl
 {
 namespace Wwise
 {
-class CObject;
-
-class CEvent final : public IEvent, public CPoolObject<CEvent, stl::PSyncNone>
+class CEvent final : public ITriggerConnection, public CPoolObject<CEvent, stl::PSyncNone>
 {
 public:
 
@@ -28,41 +22,53 @@ public:
 	CEvent& operator=(CEvent const&) = delete;
 	CEvent& operator=(CEvent&&) = delete;
 
-	explicit CEvent(CryAudio::CEvent& event_)
-		: m_state(EEventState::None)
-		, m_id(AK_INVALID_UNIQUE_ID)
-		, m_event(event_)
-		, m_pObject(nullptr)
-		, m_maxAttenuation(0.0f)
-		, m_toBeRemoved(false)
+#if defined(CRY_AUDIO_IMPL_WWISE_USE_DEBUG_CODE)
+	explicit CEvent(AkUniqueID const id, float const maxAttenuation, char const* const szName)
+		: m_id(id)
+		, m_maxAttenuation(maxAttenuation)
+		, m_numInstances(0)
+		, m_toBeDestructed(false)
+		, m_name(szName)
 	{}
+#else
+	explicit CEvent(AkUniqueID const id, float const maxAttenuation)
+		: m_id(id)
+		, m_maxAttenuation(maxAttenuation)
+		, m_numInstances(0)
+		, m_toBeDestructed(false)
+	{}
+#endif  // CRY_AUDIO_IMPL_WWISE_USE_DEBUG_CODE
 
-	virtual ~CEvent() override;
+	virtual ~CEvent() override = default;
 
-	// CryAudio::Impl::IEvent
-	virtual ERequestStatus Stop() override;
-	// ~CryAudio::Impl::IEvent
+	// CryAudio::Impl::ITriggerConnection
+	virtual ETriggerResult Execute(IObject* const pIObject, TriggerInstanceId const triggerInstanceId) override;
+	virtual void           Stop(IObject* const pIObject) override;
+	// ~CryAudio::Impl::ITriggerConnection
 
-	void SetInitialVirtualState(float const distance);
-	void UpdateVirtualState(float const distance);
+	AkUniqueID GetId() const             { return m_id; }
+	float      GetMaxAttenuation() const { return m_maxAttenuation; }
 
-#if defined(INCLUDE_WWISE_IMPL_PRODUCTION_CODE)
-	void        SetName(char const* const szName) { m_name = szName; }
-	char const* GetName() const                   { return m_name.c_str(); }
-#endif  // INCLUDE_WWISE_IMPL_PRODUCTION_CODE
+	void       IncrementNumInstances()   { ++m_numInstances; }
+	void       DecrementNumInstances();
 
-	EEventState       m_state;
-	AkUniqueID        m_id;
-	CryAudio::CEvent& m_event;
-	CObject*          m_pObject;
-	float             m_maxAttenuation;
-	std::atomic_bool  m_toBeRemoved;
+	bool       CanBeDestructed() const   { return m_toBeDestructed && (m_numInstances == 0); }
+	void       SetToBeDestructed() const { m_toBeDestructed = true; }
+
+#if defined(CRY_AUDIO_IMPL_WWISE_USE_DEBUG_CODE)
+	char const* GetName() const { return m_name.c_str(); }
+#endif  // CRY_AUDIO_IMPL_WWISE_USE_DEBUG_CODE
 
 private:
 
-#if defined(INCLUDE_WWISE_IMPL_PRODUCTION_CODE)
-	CryFixedStringT<MaxControlNameLength> m_name;
-#endif  // INCLUDE_WWISE_IMPL_PRODUCTION_CODE
+	AkUniqueID const m_id;
+	float const      m_maxAttenuation;
+	uint16           m_numInstances;
+	mutable bool     m_toBeDestructed;
+
+#if defined(CRY_AUDIO_IMPL_WWISE_USE_DEBUG_CODE)
+	CryFixedStringT<MaxControlNameLength> const m_name;
+#endif  // CRY_AUDIO_IMPL_WWISE_USE_DEBUG_CODE
 };
 } // namespace Wwise
 } // namespace Impl

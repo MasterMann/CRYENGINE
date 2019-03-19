@@ -9,15 +9,19 @@
 #include "GraphicsPipeline/DebugRenderTargets.h"
 #include <cctype>
 
-#if CRY_PLATFORM_DURANGO || CRY_PLATFORM_ORBIS
+#if CRY_PLATFORM_CONSOLE
 	#define RENDERER_DEFAULT_MESHPOOLSIZE         (64U << 10)
 	#define RENDERER_DEFAULT_MESHINSTANCEPOOLSIZE (16U << 10)
+	#define RENDERER_DEFAULT_MESHPOOLFREEAFTERUPDATE 1
 #endif
 #if !defined(RENDERER_DEFAULT_MESHPOOLSIZE)
 	#define RENDERER_DEFAULT_MESHPOOLSIZE (0U)
 #endif
 #if !defined(RENDERER_DEFAULT_MESHINSTANCEPOOLSIZE)
 	#define RENDERER_DEFAULT_MESHINSTANCEPOOLSIZE (0U)
+#endif
+#if !defined(RENDERER_DEFAULT_MESHPOOLFREEAFTERUPDATE)
+	#define RENDERER_DEFAULT_MESHPOOLFREEAFTERUPDATE 0
 #endif
 
 //////////////////////////////////////////////////////////////////////////
@@ -47,6 +51,7 @@ AllocateConstIntCVar(CRendererCVars, CV_r_GraphicsPipelineMobile);
 AllocateConstIntCVar(CRendererCVars, CV_e_DebugTexelDensity);
 AllocateConstIntCVar(CRendererCVars, CV_e_DebugDraw);
 AllocateConstIntCVar(CRendererCVars, CV_e_TerrainBlendingDebug);
+AllocateConstIntCVar(CRendererCVars, CV_e_Clouds);
 AllocateConstIntCVar(CRendererCVars, CV_r_statsMinDrawcalls);
 AllocateConstIntCVar(CRendererCVars, CV_r_stats);
 AllocateConstIntCVar(CRendererCVars, CV_r_profiler);
@@ -288,6 +293,7 @@ int CRendererCVars::CV_r_shadersCacheClearOnVersionChange;
 AllocateConstIntCVar(CRendererCVars, CV_r_meshprecache);
 int CRendererCVars::CV_r_meshpoolsize;
 int CRendererCVars::CV_r_meshinstancepoolsize;
+int CRendererCVars::CV_r_MeshPoolForceFreeAfterUpdate;
 
 AllocateConstIntCVar(CRendererCVars, CV_r_ZPassDepthSorting);
 float CRendererCVars::CV_r_ZPrepassMaxDist;
@@ -853,13 +859,50 @@ static void OnChangeShadowJitteringCVar(ICVar* pCVar)
 
 void CRendererCVars::OnChange_CachedShadows(ICVar* pCVar)
 {
+	if (pCVar)
+	{
+		const char* pName = pCVar->GetName();
+		if (pName && !strcmp(pName, "r_ShadowsCacheResolutions"))
+		{
+			StaticArray<int, MAX_GSM_LODS_NUM> nResolutions = gRenDev->GetCachedShadowsResolution();
+
+			// parse shadow resolutions from cvar
+			{
+				int nCurPos = 0;
+				int nCurRes = 0;
+
+				string strResolutions = pCVar->GetString();
+				string strCurRes = strResolutions.Tokenize(" ,;-\t", nCurPos);
+				if (!strCurRes.empty())
+				{
+					nResolutions.fill(0);
+
+					while (!strCurRes.empty())
+					{
+						int nRes = atoi(strCurRes.c_str());
+						nResolutions[nCurRes] = clamp_tpl(nRes, 0, 16384);
+
+						strCurRes = strResolutions.Tokenize(" ,;-\t", nCurPos);
+						++nCurRes;
+					}
+
+					gRenDev->SetCachedShadowsResolution(nResolutions);
+				}
+			}
+		}
+	}
+
 	if (gEnv->p3DEngine)  // 3DEngine not initialized during ShaderCacheGen
 	{
-		CRendererResources::CreateCachedShadowMaps();
-
 		gEnv->p3DEngine->SetShadowsGSMCache(true);
 		gEnv->p3DEngine->SetRecomputeCachedShadows(ShadowMapFrustum::ShadowCacheData::eFullUpdate);
 		gEnv->p3DEngine->InvalidateShadowCacheData();
+	}
+
+	if (ShadowFrustumMGPUCache* pShadowMGPUCache = gRenDev->GetShadowFrustumMGPUCache())
+	{
+		pShadowMGPUCache->nUpdateMaskRT = 0;
+		pShadowMGPUCache->nUpdateMaskMT = 0;
 	}
 }
 
@@ -1628,15 +1671,19 @@ void CRendererCVars::InitCVars()
 	               "Usage: r_ShadowsParticleNormalEffect [x], 1. is default");
 
 	REGISTER_CVAR3_CB("r_ShadowsCache", CV_r_ShadowsCache, 0, VF_NULL,
-	                  "Replace all sun cascades above cvar value with cached (static) shadow map: 0=no cached shadows, 1=replace first cascade and up, 2=replace second cascade and up,...",
+	                  "Replace all sun cascades above cvar value with cached (static) shadow map:\n"
+	                  "0=no cached shadows,\n"
+	                  "1=replace first cascade and up\n"
+	                  "2=replace second cascade and up,...",
 	                  OnChange_CachedShadows);
 
-	REGISTER_CVAR3_CB("r_ShadowsCacheFormat", CV_r_ShadowsCacheFormat, 1, VF_NULL,
+	REGISTER_CVAR3("r_ShadowsCacheFormat", CV_r_ShadowsCacheFormat, 1, VF_NULL,
 	                  "0=use D32 texture format for shadow cache\n"
-	                  "1=use D16 texture format for shadow cache\n",
-	                  OnChange_CachedShadows);
+	                  "1=use D16 texture format for shadow cache\n");
 
-	REGISTER_STRING_CB("r_ShadowsCacheResolutions", "", VF_RENDERER_CVAR, "Shadow cache resolution per cascade. ", OnChange_CachedShadows);
+	REGISTER_STRING_CB("r_ShadowsCacheResolutions", "", VF_RENDERER_CVAR,
+	                   "Shadow cache resolution per cascade.\n",
+	                   OnChange_CachedShadows);
 
 	REGISTER_CVAR3("r_ShadowsNearestMapResolution", CV_r_ShadowsNearestMapResolution, 4096, VF_REQUIRE_APP_RESTART,
 	               "Nearest shadow map resolution. Default: 4096");
@@ -1713,8 +1760,10 @@ void CRendererCVars::InitCVars()
 #if !CRY_RENDERER_VULKAN
 	REGISTER_CVAR3_CB("r_HeightMapAO", CV_r_HeightMapAO, 1, VF_NULL,
 	                  "Large Scale Ambient Occlusion based on height map approximation of the scene\n"
-	                  "0=off, 1=quarter resolution, 2=half resolution, 3=full resolution",
-	                  OnChange_CachedShadows);
+	                  "0=off\n"
+	                  "1=quarter resolution\n"
+	                  "2=half resolution\n"
+	                  "3=full resolution", OnChange_CachedShadows);
 	REGISTER_CVAR3("r_HeightMapAOAmount", CV_r_HeightMapAOAmount, 1.0f, VF_NULL,
 	               "Height Map Ambient Occlusion Amount");
 	REGISTER_CVAR3_CB("r_HeightMapAOResolution", CV_r_HeightMapAOResolution, 2048, VF_NULL,
@@ -2365,6 +2414,11 @@ void CRendererCVars::InitCVars()
 	REGISTER_CVAR3("r_MeshInstancePoolSize", CV_r_meshinstancepoolsize, RENDERER_DEFAULT_MESHINSTANCEPOOLSIZE, VF_NULL,
 	               "The size of the pool for volatile render data in kilobytes. "
 	               "Disabled by default on PC (mesh data allocated on heap)."
+	               "Enabled by default on consoles. Requires app restart to change.");
+	REGISTER_CVAR3("r_MeshPoolForceFreeAfterUpdate", CV_r_MeshPoolForceFreeAfterUpdate, RENDERER_DEFAULT_MESHPOOLFREEAFTERUPDATE, VF_NULL,
+	               "Force mesh pool (malloc) allocations to free after the GPU buffer update."
+	               "Fixes allocations not being freed when RENDERMESH_BUFFER_ENABLE_DIRECT_ACCESS is off on consoles."
+	               "Disabled by default on PC."
 	               "Enabled by default on consoles. Requires app restart to change.");
 
 	CV_r_excludeshader = REGISTER_STRING("r_ExcludeShader", "0", VF_CHEAT,
@@ -3083,6 +3137,10 @@ void CRendererCVars::InitCVars()
 
 	//////////////////////////////////////////////////////////////////////////
 	InitExternalCVars();
+
+	// Compensate for no OnChange-handler called when CVar-Overrride is done
+	static ICVar* pShadowsCacheResolutions = gEnv && gEnv->pConsole ? gEnv->pConsole->GetCVar("r_ShadowsCacheResolutions") : 0;
+	OnChange_CachedShadows(pShadowsCacheResolutions);
 }
 
 void CRendererCVars::InitExternalCVars()
@@ -3129,6 +3187,7 @@ CCVarUpdateRecorder::SUpdateRecord::SUpdateRecord(ICVar* pCVar)
 	switch (type)
 	{
 		case ECVarType::Int:    intValue = pCVar->GetIVal();                 break;
+		case ECVarType::Int64:  int64Value = pCVar->GetI64Val();             break;
 		case ECVarType::Float:  floatValue = pCVar->GetFVal();               break;
 		case ECVarType::String: cry_strcpy(stringValue, pCVar->GetString()); break;
 		default: assert(false);

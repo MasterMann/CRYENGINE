@@ -24,7 +24,8 @@ class CParticleSystem : public Cry3DEngineBase, public IParticleSystem, ISyncMai
 	~CParticleSystem();
 
 private:
-	typedef std::unordered_map<string, _smart_ptr<CParticleEffect>, stl::hash_stricmp<string>, stl::hash_stricmp<string>> TEffectNameMap;
+	template<typename T> using TNameAssetMap =
+		std::unordered_map<string, _smart_ptr<T>, stl::hash_stricmp<string>, stl::hash_stricmp<string>>;
 
 public:
 	// IParticleSystem
@@ -58,6 +59,9 @@ public:
 		SParticleStats       statsCPU;
 		SParticleStats       statsGPU;
 		TElementCounts<uint> statsSync;
+
+		SThreadData()
+			: memHeap(stl::FHeap().PageSize(0x4000).StackAlloc(true).FreeWhenEmpty(false)) {}
 	};
 
 	PParticleEffect          LoadEffect(cstr effectName);
@@ -74,7 +78,8 @@ public:
 	static float             GetMaxAngularDensity(const CCamera& camera);
 	QuatT                    GetLastCameraPose() const        { return m_lastCameraPose; }
 	const TParticleEmitters& GetActiveEmitters() const        { return m_emitters; }
-	IMaterial*               GetFlareMaterial();
+	IMaterial*               GetTextureMaterial(cstr textureName, bool gpu, gpu_pfx2::EFacingMode facing);
+	uint                     GetParticleSpec() const;
 
 	typedef std::vector<SParticleFeatureParams> TFeatureParams;
 	
@@ -91,18 +96,19 @@ private:
 	// ~PFX1 to PFX2
 
 private:
-	CParticleJobManager      m_jobManager;
-	CParticleProfiler        m_profiler;
-	TEffectNameMap           m_effects;
-	TParticleEmitters        m_emitters;
-	TParticleEmitters        m_newEmitters;
-	std::vector<SThreadData> m_threadData;
-	_smart_ptr<IMaterial>    m_pFlareMaterial;
-	bool                     m_bResetEmitters = false;
-	QuatT                    m_lastCameraPose = IDENTITY;
-	uint                     m_numFrames      = 0;
-	uint                     m_nextEmitterId  = 0;
-	ESystemConfigSpec        m_lastSysSpec    = END_CONFIG_SPEC_ENUM;
+	CParticleJobManager            m_jobManager;
+	CParticleProfiler              m_profiler;
+	TNameAssetMap<CParticleEffect> m_effects;
+	TParticleEmitters              m_emitters;
+	TParticleEmitters              m_newEmitters;
+	std::vector<SThreadData>       m_threadData;
+	TNameAssetMap<IMaterial>       m_materials;
+	bool                           m_bResetEmitters = false;
+	QuatT                          m_lastCameraPose = IDENTITY;
+	uint                           m_numFrames      = 0;
+	uint                           m_numLevelLoads  = 0;
+	uint                           m_nextEmitterId  = 0;
+	ESystemConfigSpec              m_lastSysSpec    = END_CONFIG_SPEC_ENUM;
 };
 
 ILINE CParticleSystem* GetPSystem()

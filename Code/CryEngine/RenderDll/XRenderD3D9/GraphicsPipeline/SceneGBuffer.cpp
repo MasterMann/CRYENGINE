@@ -23,9 +23,7 @@ CSceneGBufferStage::CSceneGBufferStage()
 void CSceneGBufferStage::Init()
 {
 	m_pPerPassResourceSet = GetDeviceObjectFactory().CreateResourceSet(CDeviceResourceSet::EFlags_ForceSetAllState);
-
-	bool bSuccess = SetAndBuildPerPassResources(true);
-	assert(bSuccess);
+	CRY_VERIFY(SetAndBuildPerPassResources(true));
 
 	// Create resource layout
 	m_pResourceLayout = gcpRendD3D->GetGraphicsPipeline().CreateScenePassLayout(m_perPassResources);
@@ -37,11 +35,6 @@ void CSceneGBufferStage::Init()
 	m_depthPrepass.SetLabel("ZPREPASS");
 	m_depthPrepass.SetFlags(CSceneRenderPass::ePassFlags_ReverseDepth | CSceneRenderPass::ePassFlags_RenderNearest | CSceneRenderPass::ePassFlags_VrProjectionPass);
 	m_depthPrepass.SetPassResources(m_pResourceLayout, m_pPerPassResourceSet);
-
-	CTexture* pSceneSpecular = CRendererResources::s_ptexSceneSpecular;
-#if defined(DURANGO_USE_ESRAM)
-	pSceneSpecular = CRendererResources::s_ptexSceneSpecularESRAM;
-#endif
 
 	// Opaque Pass
 	m_opaquePass.SetLabel("OPAQUE");
@@ -354,7 +347,7 @@ void CSceneGBufferStage::ExecuteSceneOpaque()
 	 *     FOB_ALPHATEST set               ...
 	 *                                     ...Num
 	 */
-	CRY_ASSERT_MESSAGE(CRenderer::CV_r_ZPassDepthSorting == 1, "RendItem sorting has been overwritten and are not sorted by ObjFlags, this function can't be used!");;
+	CRY_ASSERT_MESSAGE(CRenderer::CV_r_ZPassDepthSorting == 1, "RendItem sorting has been overwritten and are not sorted by ObjFlags, this function can't be used!");
 
 	static_assert(FOB_SORT_MASK & FOB_HAS_PREVMATRIX, "FOB's HAS_PREVMATRIX must be a sort criteria");
 	static_assert(FOB_SORT_MASK & FOB_ZPREPASS, "FOB's ZPREPASS must be a sort criteria");
@@ -502,7 +495,7 @@ void CSceneGBufferStage::Execute()
 
 	if (CRenderer::CV_r_DeferredShadingTiled < CTiledShadingStage::eDeferredMode_Disabled)
 	{
-		bool bClearAll = CRenderer::CV_r_wireframe != 0;
+		bool bClearAll = CRenderer::CV_r_wireframe != 0 || CRendererCVars::CV_r_DeferredShadingDebugGBuffer > 0;
 
 		if (CVrProjectionManager::IsMultiResEnabledStatic())
 			bClearAll = true;
@@ -583,7 +576,7 @@ void CSceneGBufferStage::ExecuteMinimumZpass()
 	PROFILE_LABEL_SCOPE("MINIMUM_ZPASS");
 
 	// NOTE: no more external state changes in here, everything should have been setup
-	auto& rViewport = GetViewport();
+
 	CRenderView* pRenderView = RenderView();
 	auto& rendItemDrawer = pRenderView->GetDrawer();
 

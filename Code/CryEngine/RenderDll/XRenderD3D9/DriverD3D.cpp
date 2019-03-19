@@ -21,6 +21,7 @@
 #include "StatoscopeRenderStats.h"
 #include "GraphicsPipeline/DebugRenderTargets.h"
 #include "GraphicsPipeline/TiledShading.h"
+#include "GraphicsPipeline/ShadowMap.h"
 #include "GraphicsPipeline/VolumetricFog.h"
 #include "GraphicsPipeline/Common/UtilityPasses.h"
 
@@ -143,7 +144,6 @@ void CD3D9Renderer::InitRenderer()
 	if (CV_r_enableauxgeom)
 		m_pRenderAuxGeomD3D = CRenderAuxGeomD3D::Create(*this);
 #endif
-	m_pColorGradingControllerD3D = new CColorGradingController();
 
 	m_wireframe_mode = R_SOLID_MODE;
 
@@ -1020,9 +1020,11 @@ void CD3D9Renderer::RT_BeginFrame(const SDisplayContextKey& displayContextKey)
 	ICVar* pCVDebugTexelDensity = gEnv->pConsole->GetCVar("e_texeldensity");
 	ICVar* pCVDebugDraw = gEnv->pConsole->GetCVar("e_debugdraw");
 	ICVar* pCVTerrainBlendingDebug = gEnv->pConsole->GetCVar("e_TerrainBlendingDebug");
+	ICVar* pCVClouds = gEnv->pConsole->GetCVar("e_Clouds");
 	CRendererCVars::CV_e_DebugTexelDensity = pCVDebugTexelDensity ? pCVDebugTexelDensity->GetIVal() : 0;
 	CRendererCVars::CV_e_DebugDraw = pCVDebugDraw ? pCVDebugDraw->GetIVal() : 0;
 	CRendererCVars::CV_e_TerrainBlendingDebug = pCVTerrainBlendingDebug ? pCVTerrainBlendingDebug->GetIVal() : 0;
+	CRendererCVars::CV_e_Clouds = pCVClouds ? pCVClouds->GetIVal() : 0;
 #endif
 
 	if (m_hWndActive == m_hWnd)
@@ -1137,8 +1139,7 @@ bool CD3D9Renderer::RT_StoreTextureToFile(const char* szFilePath, CTexture* pSrc
 	const char* pReqFileFormatExt(PathUtil::GetExt(szFilePath));
 	SCaptureFormatInfo::ECaptureFileFormat captureFormat = SCaptureFormatInfo::GetCaptureFormatByExtension(pReqFileFormatExt);
 
-	bool formatBGRA = pSrc->GetDevTexture()->GetNativeFormat() == DXGI_FORMAT_B8G8R8A8_UNORM_SRGB;
-	bool needRBSwap = (captureFormat == SCaptureFormatInfo::eCaptureFormat_TGA ? !formatBGRA : formatBGRA);	SResourceDimension srcDimensions = pSrc->GetDevTexture()->GetDimension();
+	SResourceDimension srcDimensions = pSrc->GetDevTexture()->GetDimension();
 
 	EReadTextureFormat dstFormat = (captureFormat == SCaptureFormatInfo::eCaptureFormat_TGA) ? EReadTextureFormat::BGR8 : EReadTextureFormat::RGB8;
 
@@ -1231,7 +1232,6 @@ void CD3D9Renderer::ResolveSupersampledRendering()
 
 	const CRenderView* pRenderView = GetGraphicsPipeline().GetCurrentRenderView();
 	const CRenderOutput* pOutput = GetGraphicsPipeline().GetCurrentRenderOutput();
-	CRenderDisplayContext* pDC = GetActiveDisplayContext();
 
 	CDownsamplePass::EFilterType eFilter = CDownsamplePass::FilterType_Box;
 	if (CV_r_SupersamplingFilter == 1)
@@ -1568,10 +1568,7 @@ void CD3D9Renderer::DebugDrawStats1(const SRenderStatistics& RStats)
 	size_t nMemApp = 0;
 	size_t nMemDevVB = 0;
 	size_t nMemDevIB = 0;
-	size_t nMemDevVBPool = 0;
-	size_t nMemDevIBPool = 0;
-	size_t nMemDevVBPoolUsed = 0;
-	size_t nMemDevIBPoolUsed = 0;
+	//size_t nMemDevVBPool = 0;
 	{
 		AUTO_LOCK(CRenderMesh::m_sLinkLock);
 		for (util::list<CRenderMesh>* iter = CRenderMesh::s_MeshList.prev; iter != &CRenderMesh::s_MeshList; iter = iter->prev)
@@ -1750,7 +1747,6 @@ void CD3D9Renderer::DebugDrawStats1(const SRenderStatistics& RStats)
 
 	n = 0;
 	nSize = 0;
-	size_t nSizeD = 0;
 	CRenderElement* pRE = CRenderElement::s_RootGlobal.m_NextGlobal;
 	while (pRE != &CRenderElement::s_RootGlobal)
 	{
@@ -1761,16 +1757,17 @@ void CD3D9Renderer::DebugDrawStats1(const SRenderStatistics& RStats)
 	nY += nYstep;
 	IRenderAuxText::Draw2dLabel(nX, nY += nYstep, fFSize, &col.r, false, "Render elements: %d (size: %.3f Mb)", n, BYTES_TO_MB(nSize));
 
-	size_t nSAll = 0;
-	size_t nSOneMip = 0;
-	size_t nSNM = 0;
-	size_t nSysAll = 0;
-	size_t nSysOneMip = 0;
-	size_t nSysNM = 0;
-	size_t nSRT = 0;
+	size_t nSDevAll = 0;
+	size_t nSDevOneMip = 0;
+	size_t nSDevNM = 0;
+	size_t nSDskAll = 0;
+	size_t nSDskOneMip = 0;
+	size_t nSDskNM = 0;
+	size_t nSDevTrg = 0;
 	size_t nObjSize = 0;
-	size_t nStreamed = 0;
-	size_t nStreamedSys = 0;
+	size_t nCchSize = 0;
+	size_t nStreamedDev = 0;
+	size_t nStreamedDsk = 0;
 	size_t nStreamedUnload = 0;
 	n = 0;
 	pRL = CBaseResource::GetResourcesForClass(CTexture::mfGetClassName());
@@ -1783,48 +1780,59 @@ void CD3D9Renderer::DebugDrawStats1(const SRenderStatistics& RStats)
 			if (!tp || tp->IsNoTexture())
 				continue;
 			n++;
-			nObjSize += tp->GetAllocatedSystemMemory(true);
-			uint32 nS = tp->GetDeviceDataSize();
-			uint32 nSys = tp->GetDataSize();
+			uint32 nSDev = tp->GetDeviceDataSize();
+			uint32 nSDsk = tp->GetDataSize();
+			uint32 nSObj = tp->GetAllocatedSystemMemory(true, false);
+			uint32 nSCch = tp->GetAllocatedSystemMemory(true, true);
+
+			nObjSize += nSObj;
+			nCchSize += nSCch;
+
 			if (tp->IsStreamed())
 			{
 				if (tp->IsUnloaded())
 				{
-					assert(nS == 0);
-					nStreamedUnload += nSys;
+					assert(nSDev == 0);
+					nStreamedUnload += nSDsk;
 				}
 				else if (tp->GetDevTexture())
-					nStreamedSys += nSys;
-				nStreamed += nS;
+				{
+					nStreamedDsk += nSDsk;
+				}
+
+				nStreamedDev += nSDev;
 			}
+
 			if (tp->GetDevTexture())
 			{
 				if (!(tp->GetFlags() & (FT_USAGE_RENDERTARGET | FT_USAGE_DEPTHSTENCIL | FT_USAGE_UNORDERED_ACCESS)))
 				{
 					if (tp->GetName()[0] != '$' && tp->GetNumMips() <= 1)
-						nSysOneMip += nSys;
+						nSDskOneMip += nSDsk;
 					if (tp->GetFlags() & FT_TEX_NORMAL_MAP)
-						nSysNM += nSys;
+						nSDskNM += nSDsk;
 					else
-						nSysAll += nSys;
+						nSDskAll += nSDsk;
 				}
 			}
-			if (!nS)
+
+			if (!nSDev)
 				continue;
+
 			if (tp->GetFlags() & (FT_USAGE_RENDERTARGET | FT_USAGE_DEPTHSTENCIL | FT_USAGE_UNORDERED_ACCESS))
-				nSRT += nS;
+				nSDevTrg += nSDev;
 			else
 			{
 				if (tp->GetName()[0] != '$' && tp->GetNumMips() <= 1)
-					nSOneMip += nS;
+					nSDevOneMip += nSDev;
 				if (tp->GetFlags() & FT_TEX_NORMAL_MAP)
-					nSNM += nS;
+					nSDevNM += nSDev;
 				else
-					nSAll += nS;
+					nSDevAll += nSDev;
 			}
 			
-			nSAll += (tp->GetFlags() & FT_STAGE_UPLOAD)   ? nS : 0;
-			nSAll += (tp->GetFlags() & FT_STAGE_READBACK) ? nS : 0;
+			nSDevAll += (tp->GetFlags() & FT_STAGE_UPLOAD)   ? nSDev : 0;
+			nSDevAll += (tp->GetFlags() & FT_STAGE_READBACK) ? nSDev : 0;
 		}
 	}
 
@@ -1832,31 +1840,23 @@ void CD3D9Renderer::DebugDrawStats1(const SRenderStatistics& RStats)
 	IRenderAuxText::Draw2dLabel(nX, nY += nYstep, fFSize, &col.r, false, "CryName: %d, Size: %.3f Mb...", CCryNameR::GetNumberOfEntries(), BYTES_TO_MB(CCryNameR::GetMemoryUsage()));
 	nY += nYstep;
 
-	IRenderAuxText::Draw2dLabel(nX, nY += nYstep, fFSize, &col.r, false, "Textures: %d, ObjSize: %.3f Mb...", n, BYTES_TO_MB(nObjSize));
-	IRenderAuxText::Draw2dLabel(nX, nY += nYstep, fFSize, &col.r, false, " All Managed Video Size: %.3f Mb (Normals: %.3f Mb + Other: %.3f Mb), One mip: %.3f", BYTES_TO_MB(nSNM + nSAll), BYTES_TO_MB(nSNM), BYTES_TO_MB(nSAll), BYTES_TO_MB(nSOneMip));
-	IRenderAuxText::Draw2dLabel(nX, nY += nYstep, fFSize, &col.r, false, " All Managed System Size: %.3f Mb (Normals: %.3f Mb + Other: %.3f Mb), One mip: %.3f", BYTES_TO_MB(nSysNM + nSysAll), BYTES_TO_MB(nSysNM), BYTES_TO_MB(nSysAll), BYTES_TO_MB(nSysOneMip));
-	IRenderAuxText::Draw2dLabel(nX, nY += nYstep, fFSize, &col.r, false, " Streamed Size: Video: %.3f, System: %.3f, Unloaded: %.3f", BYTES_TO_MB(nStreamed), BYTES_TO_MB(nStreamedSys), BYTES_TO_MB(nStreamedUnload));
+	IRenderAuxText::Draw2dLabel(nX, nY += nYstep, fFSize, &col.r, false, "Textures: %d, ObjSize: %.3f Mb (+ %.3f Mb cached mips)...", n, BYTES_TO_MB(nObjSize), BYTES_TO_MB(nCchSize));
+	IRenderAuxText::Draw2dLabel(nX, nY += nYstep, fFSize, &col.r, false, " All Managed Video Size: %.3f Mb (Normals: %.3f Mb + Other: %.3f Mb), One mip: %.3f", BYTES_TO_MB(nSDevNM + nSDevAll), BYTES_TO_MB(nSDevNM), BYTES_TO_MB(nSDevAll), BYTES_TO_MB(nSDevOneMip));
+	IRenderAuxText::Draw2dLabel(nX, nY += nYstep, fFSize, &col.r, false, " All Referenced Disk Size: %.3f Mb (Normals: %.3f Mb + Other: %.3f Mb), One mip: %.3f", BYTES_TO_MB(nSDskNM + nSDskAll), BYTES_TO_MB(nSDskNM), BYTES_TO_MB(nSDskAll), BYTES_TO_MB(nSDskOneMip));
+	IRenderAuxText::Draw2dLabel(nX, nY += nYstep, fFSize, &col.r, false, " Streamed Size: Video: %.3f, Disk: %.3f, Unloaded: %.3f", BYTES_TO_MB(nStreamedDev), BYTES_TO_MB(nStreamedDsk), BYTES_TO_MB(nStreamedUnload));
 
-	SDynTexture_Shadow* pTXSH = SDynTexture_Shadow::s_RootShadow.m_NextShadow;
-	size_t nSizeSH = 0;
-	while (pTXSH != &SDynTexture_Shadow::s_RootShadow)
-	{
-		if (pTXSH->m_pTexture)
-			nSizeSH += pTXSH->m_pTexture->GetDeviceDataSize();
-		pTXSH = pTXSH->m_NextShadow;
-	}
-
-	size_t nSizeAtlasClouds = SDynTexture2::s_nMemoryOccupied[eTP_Clouds];
-	size_t nSizeAtlasSprites = SDynTexture2::s_nMemoryOccupied[eTP_Sprites];
-	size_t nSizeAtlasVoxTerrain = SDynTexture2::s_nMemoryOccupied[eTP_VoxTerrain];
-	size_t nSizeAtlasDynTexSources = SDynTexture2::s_nMemoryOccupied[eTP_DynTexSources];
+	size_t nSizeShadows = GetGraphicsPipeline().GetShadowStage()->GetAllocatedMemory();
+	size_t nSizeSVOGI = 0;
+#if defined(FEATURE_SVO_GI)
+	nSizeSVOGI = CSvoRenderer::GetInstance()->GetAllocatedMemory();
+#endif
+	size_t nSizeAtlasClouds = 0;
+	size_t nSizeAtlasSprites = 0;
+	size_t nSizeAtlasVoxTerrain = 0;
+	size_t nSizeAtlasDynTexSources = 0;
 	size_t nSizeAtlas = nSizeAtlasClouds + nSizeAtlasSprites + nSizeAtlasVoxTerrain + nSizeAtlasDynTexSources;
-	size_t nSizeManagedDyn = SDynTexture::s_nMemoryOccupied;
 
-	IRenderAuxText::Draw2dLabel(nX, nY += nYstep, fFSize, &col.r, false, " Dynamic DataSize: %.3f Mb (Atlases: %.3f Mb, Managed: %.3f Mb (Shadows: %.3f Mb), Other: %.3f Mb)", BYTES_TO_MB(nSRT), BYTES_TO_MB(nSizeAtlas), BYTES_TO_MB(nSizeManagedDyn), BYTES_TO_MB(nSizeSH), BYTES_TO_MB(nSRT - nSizeManagedDyn - nSizeAtlas));
-
-	size_t nSizeZRT = 0;
-	size_t nSizeCRT = 0;
+	IRenderAuxText::Draw2dLabel(nX, nY += nYstep, fFSize, &col.r, false, " Runtime Size: %.3f Mb (Atlases: %.3f Mb, SVOGI: %.3f Mb, Shadows: %.3f Mb, Other: %.3f Mb)", BYTES_TO_MB(nSDevTrg), BYTES_TO_MB(nSizeAtlas), BYTES_TO_MB(nSizeSVOGI), BYTES_TO_MB(nSizeShadows), BYTES_TO_MB(nSDevTrg - nSizeSVOGI - nSizeAtlas - nSizeShadows));
 
 	DebugPerfBars(RStats,nXBars, nYBars + 30);
 #endif
@@ -1891,14 +1891,8 @@ void CD3D9Renderer::DebugVidResourcesBars(int nX, int nY)
 	AuxDrawQuad(nX + fOffs, nY + 1, nX + fOffs + fMaxBar, nY + 12, Col_Cyan, 1.0f);
 	nY += nYst;
 
-	SDynTexture_Shadow* pTXSH = SDynTexture_Shadow::s_RootShadow.m_NextShadow;
-	size_t nSizeSH = 0;
-	while (pTXSH != &SDynTexture_Shadow::s_RootShadow)
-	{
-		if (pTXSH->m_pTexture)
-			nSizeSH += pTXSH->m_pTexture->GetDeviceDataSize();
-		pTXSH = pTXSH->m_NextShadow;
-	}
+	size_t nSizeSH = GetGraphicsPipeline().GetShadowStage()->GetAllocatedMemory();
+
 	IRenderAuxText::Draw2dLabel(nX, nY, fFSize, &col.r, false, "Shadow textures: %.1f Mb", BYTES_TO_MB(nSizeSH));
 
 	AuxDrawQuad(nX + fOffs, nY + 1, nX + fOffs + (float)nSizeSH / fMaxTextureMemory * fMaxBar, nY + 12, Col_Green, 1.0f);
@@ -1919,11 +1913,7 @@ void CD3D9Renderer::DebugVidResourcesBars(int nX, int nY)
 	nY += nYst;
 
 	size_t nSizeD2 = 0;
-	for (i = 0; i < eTP_Max; i++)
-	{
-		CryAutoReadLock<CryRWLock> scopeLock(SDynTexture2::s_memoryOccupiedLock);
-		nSizeD2 += SDynTexture2::s_nMemoryOccupied[i];
-	}
+
 	IRenderAuxText::Draw2dLabel(nX, nY, fFSize, &col.r, false, "Dyn. atlas text.: %.1f Mb", BYTES_TO_MB(nSizeD2));
 
 	AuxDrawQuad(nX + fOffs, nY + 1, nX + fOffs + (float)nSizeD2 / fMaxTextureMemory * fMaxBar, nY + 12, Col_Green, 1.0f);
@@ -1968,10 +1958,6 @@ void CD3D9Renderer::DebugVidResourcesBars(int nX, int nY)
 				nSRT += nS;
 			else
 			{
-				if (!tp->IsStreamed())
-				{
-					int nnn = 0;
-				}
 				if (tp->GetName()[0] != '$' && tp->GetNumMips() <= 1)
 					nSOneMip += nS;
 				if (tp->GetFlags() & FT_TEX_NORMAL_MAP)
@@ -2039,12 +2025,9 @@ void CD3D9Renderer::DebugPerfBars(const SRenderStatistics& RStats,int nX, int nY
 #if !defined(EXCLUDE_RARELY_USED_R_STATS) && defined(ENABLE_PROFILING_CODE)
 	int nYst = 15;
 	float fFSize = 1.4f;
-	ColorF col = Col_Yellow;
 	ColorF colP = Col_Cyan;
 
 	const SRenderStatistics::SFrameSummary& rtTimings = RStats.m_Summary;
-	CRenderDisplayContext* pDC = GetActiveDisplayContext();
-	SRenderViewport vp = pDC->GetViewport();
 
 	// Draw performance bars
 	const SAuxGeomRenderFlags oldRenderFlags = IRenderAuxGeom::GetAux()->GetRenderFlags();
@@ -2326,7 +2309,7 @@ void CD3D9Renderer::DebugDrawStats8(const SRenderStatistics& RStats)
 void CD3D9Renderer::DebugDrawStats2(const SRenderStatistics& RStats)
 {
 	// NOT IMPLEMENTED
-	assert(0 && "CD3D9Renderer::DebugDrawStats2");
+	CRY_ASSERT_MESSAGE(false, "CD3D9Renderer::DebugDrawStats2");
 }
 
 void CD3D9Renderer::DebugDrawStats20(const SRenderStatistics& RStats)
@@ -2365,8 +2348,6 @@ void CD3D9Renderer::DebugDrawStats(const SRenderStatistics& RStats)
 #ifndef _RELEASE
 	if (CV_r_stats)
 	{
-		CRenderer* crend = gRenDev;
-
 		CCryNameTSCRC Name;
 		switch (CV_r_stats)
 		{
@@ -2419,7 +2400,6 @@ void CD3D9Renderer::DebugDrawStats(const SRenderStatistics& RStats)
 
 				for (; pItor != pEnd; ++pItor)
 				{
-					IRenderNode* pRenderNode = pItor->first;
 					SDrawCallCountInfo& pInfo = pItor->second;
 
 					uint32 nDrawcalls = pInfo.nShadows + pInfo.nZpass + pInfo.nGeneral + pInfo.nTransparent + pInfo.nMisc;
@@ -2492,12 +2472,6 @@ void CD3D9Renderer::RT_RenderDebug(bool bRenderStats)
 		return;
 
 #if !defined(_RELEASE)
-	if (CV_r_showbufferusage)
-	{
-		const uint32 xStartCoord = 695;
-		int YStep = 12;
-	}
-
 	const SRenderStatistics& RStats = SRenderStatistics::Write();
 
 	CSwapChainBackedRenderDisplayContext* pDC = GetBaseDisplayContext();
@@ -2537,7 +2511,6 @@ void CD3D9Renderer::RT_RenderDebug(bool bRenderStats)
 
 		float y = 0;
 		ColorF color(1.0f);
-		int flags = eDrawText_2D | eDrawText_FixedSize | eDrawText_Monospace;
 
 		color[2] = 0.0f;
 		IRenderAuxText::DrawText(Vec3(0, y += line, 0), 1, color, eDrawText_2D | eDrawText_FixedSize | eDrawText_Monospace, "Colors (black,white,blue,..): { $00$11$22$33$44$55$66$77$88$99$$$o } ()_!+*/# ?");
@@ -2699,7 +2672,6 @@ void CD3D9Renderer::RT_RenderDebug(bool bRenderStats)
 		static float fScaleUpl = 10;        // in Mb
 		static float fScaleStreamSync = 10; // in Mb
 		static float fScaleTimeUpl = 75;    // in Ms
-		static float fScaleDistFact = 4;    // Ratio
 		static FLOAT fScaleTotalMem = 0;    // in Mb
 		static float fScaleCurMem = 80;     // in Mb
 		static float fScaleStreaming = 4;   // in Mb
@@ -2707,7 +2679,6 @@ void CD3D9Renderer::RT_RenderDebug(bool bRenderStats)
 		static ColorF ColUpl = Col_White;
 		static ColorF ColStreamSync = Col_Cyan;
 		static ColorF ColTimeUpl = Col_SeaGreen;
-		static ColorF ColDistFact = Col_Orchid;
 		static ColorF ColTotalMem = Col_Red;
 		static ColorF ColCurMem = Col_Yellow;
 		static ColorF ColCurStream = Col_BlueViolet;
@@ -2716,7 +2687,6 @@ void CD3D9Renderer::RT_RenderDebug(bool bRenderStats)
 
 		fScaleTotalMem = (float)CRenderer::GetTexturesStreamPoolSize() - 1;
 
-		static float fPrevTime = iTimer->GetCurrTime();
 		static int sPrevWidth = 0;
 		static int sPrevHeight = 0;
 		static int nC;
@@ -2892,9 +2862,6 @@ void CD3D9Renderer::RT_RenderDebug(bool bRenderStats)
 
 	DrawTexelsPerMeterInfo();
 
-	if (m_pColorGradingControllerD3D)
-		m_pColorGradingControllerD3D->DrawDebugInfo();
-
 	double time = 0;
 	ticks(time);
 
@@ -2991,7 +2958,6 @@ void CD3D9Renderer::RT_RenderDebug(bool bRenderStats)
 					s.Trim();
 					if (s.length() > 0)
 					{
-						const char* curName = s.c_str();
 						nameList.push_back(s);
 					}
 					p = strtok(NULL, " ");
@@ -3136,7 +3102,7 @@ void CD3D9Renderer::RenderAux_RT()
 		{
 			if (INavigationSystem* pAINavigation = pAISystem->GetNavigationSystem())
 			{
-				if (pAINavigation->GetState() == INavigationSystem::Working)
+				if (pAINavigation->GetState() == INavigationSystem::EWorkingState::Working)
 					IRenderAuxImage::Draw2dImage(nIconSize * nIconIndex + overscanOffset.x, overscanOffset.y, nIconSize, nIconSize, CRendererResources::s_ptexIconNavigationProcessing->GetID(), 0, 1, 1, 0);
 			}
 		}
@@ -3202,9 +3168,6 @@ void CD3D9Renderer::RT_EndFrame()
 		return;
 	}
 
-	float fTime = 0; //iTimer->GetAsyncCurTimePrec();
-	HRESULT hReturn = E_FAIL;
-
 	CTimeValue TimeEndF = iTimer->GetAsyncTime();
 
 	const ESystemGlobalState systemState = iSystem->GetSystemGlobalState();
@@ -3221,7 +3184,7 @@ void CD3D9Renderer::RT_EndFrame()
 	m_pPipelineProfiler->Display();
 #endif
 
-	// Rnder-thread Aux
+	// Render-thread Aux
 	RenderAux_RT();
 
 	// VR social screen
@@ -3288,7 +3251,6 @@ void CD3D9Renderer::RT_EndFrame()
 	CaptureFrameBufferCallBack();
 
 	// Flip the back buffer to the front
-	bool bSetActive = false;
 	if (m_bSwapBuffers)
 	{
 		CRenderDisplayContext* pDC = GetActiveDisplayContext();
@@ -3305,18 +3267,19 @@ void CD3D9Renderer::RT_EndFrame()
 			const CGnmSwapChain::EFlipMode flipMode = m_VSync ? CGnmSwapChain::kFlipModeSequential : CGnmSwapChain::kFlipModeImmediate;
 			swapDC->GetSwapChain().Present(pCommandList, flipMode);
 #elif CRY_PLATFORM_ORBIS
-			hReturn = swapDC->GetSwapChain().Present(m_VSync ? 1 : 0, 0);
+			HRESULT hReturn = swapDC->GetSwapChain().Present(m_VSync ? 1 : 0, 0);
 #elif CRY_PLATFORM_DURANGO
 	#if DURANGO_ENABLE_ASYNC_DIPS
 			WaitForAsynchronousDevice();
 	#endif
-			hReturn = swapDC->GetSwapChain().Present(m_VSync ? 1 : 0, 0);
+			DWORD syncInterval = swapDC->ComputePresentInterval(m_VSync ? 1 : 0);
+			swapDC->GetSwapChain().Present(syncInterval, 0);
 	#if DURANGO_ENABLE_ASYNC_DIPS
 			WaitForAsynchronousDevice();
 	#endif
 #elif defined(SUPPORT_DEVICE_INFO)
 			DWORD syncInterval = swapDC->ComputePresentInterval(m_VSync ? 1 : 0);
-			hReturn = swapDC->GetSwapChain().Present(syncInterval, 0);
+			HRESULT hReturn = swapDC->GetSwapChain().Present(syncInterval, 0);
 
 			if (IHmdRenderer* pHmdRenderer = GetS3DRend().GetIHmdRenderer())
 			{
@@ -3371,6 +3334,7 @@ void CD3D9Renderer::RT_EndFrame()
 #if CRY_PLATFORM_DURANGO || CRY_PLATFORM_ORBIS
 			CRY_ASSERT_MESSAGE(0, "Case in EndFrame() not implemented yet");
 #elif defined(SUPPORT_DEVICE_INFO)
+			HRESULT hReturn = E_FAIL;
 			DWORD dwFlags = 0;
 			if (m_dwPresentStatus & (epsOccluded | epsNonExclusive))
 				dwFlags = DXGI_PRESENT_TEST;
@@ -3489,6 +3453,7 @@ void CD3D9Renderer::RT_EndFrame()
 		m_mtxStopAtRenderFrameEnd.Unlock();
 	}
 
+	gEnv->GetJobManager()->SetRenderDoneTime(gEnv->pTimer->GetAsyncTime());
 #if defined(ENABLE_SIMPLE_GPU_TIMERS)
 	m_pPipelineProfiler->EndSection("END");
 	m_pPipelineProfiler->EndFrame();
@@ -3515,26 +3480,24 @@ void CD3D9Renderer::RT_PresentFast()
 	CRY_ASSERT(pDC->IsSwapChainBacked());
 	auto swapDC = static_cast<CSwapChainBackedRenderDisplayContext*>(pDC);
 
-	HRESULT hReturn = S_OK;
 #if CRY_PLATFORM_DURANGO
 	#if DURANGO_ENABLE_ASYNC_DIPS
 	WaitForAsynchronousDevice();
 	#endif
-	hReturn = swapDC->GetSwapChain().Present(m_VSync ? 1 : 0, 0);
+	CRY_VERIFY(swapDC->GetSwapChain().Present(m_VSync ? 1 : 0, 0) == S_OK);
 #elif CRY_RENDERER_GNM
 	auto* const pCommandList = GnmCommandList(GetDeviceObjectFactory().GetCoreCommandList().GetGraphicsInterfaceImpl());
 	const CGnmSwapChain::EFlipMode flipMode = m_VSync ? CGnmSwapChain::kFlipModeSequential : CGnmSwapChain::kFlipModeImmediate;
 	swapDC->GetSwapChain().Present(pCommandList, flipMode);
 #elif CRY_PLATFORM_ORBIS
-	hReturn = swapDC->GetSwapChain().Present(m_VSync ? 1 : 0, 0);
+	CRY_VERIFY(swapDC->GetSwapChain().Present(m_VSync ? 1 : 0, 0) == S_OK);
 #elif defined(SUPPORT_DEVICE_INFO)
 
 	GetS3DRend().NotifyFrameFinished();
 
 	DWORD syncInterval = swapDC->ComputePresentInterval(m_VSync ? 1 : 0);
-	hReturn = swapDC->GetSwapChain().Present(syncInterval, 0);
+	CRY_VERIFY(swapDC->GetSwapChain().Present(syncInterval, 0) == S_OK);
 #endif
-	assert(hReturn == S_OK);
 
 	m_nRenderThreadFrameID++;
 }
@@ -4248,8 +4211,6 @@ void CD3D9Renderer::Graph(byte* g, int x, int y, int width, int height, int nC, 
 	Vec3 * vp = (Vec3*) alloca(width * sizeof(Vec3));
 	int i;
 
-	CRenderDisplayContext* pDC = GetActiveDisplayContext();
-
 	const SAuxGeomRenderFlags oldRenderFlags = IRenderAuxGeom::GetAux()->GetRenderFlags();
 
 	SAuxGeomRenderFlags newRenderFlags = oldRenderFlags;
@@ -4531,7 +4492,6 @@ int CD3D9Renderer::UnProjectFromScreen(float sx, float sy, float sz, float* px, 
 	Matrix44 projMatrix = camera.GetRenderProjectionMatrix();
 	int viewport[4];
 
-	const int nThreadID = m_pRT->GetThreadList();
 	//const bool bReverseDepth = true;
 	//if (bReverseDepth)
 		//sz = 1.0f - sz;
@@ -4805,7 +4765,7 @@ const char* sStreamNames[] = {
 
 void CD3D9Renderer::GetLogVBuffers()
 {
-	CRenderMesh* pRM = NULL;
+	CRenderMesh* pRM = nullptr;
 	int nNums = 0;
 	AUTO_LOCK(CRenderMesh::m_sLinkLock);
 	for (util::list<CRenderMesh>* iter = CRenderMesh::s_MeshList.next; iter != &CRenderMesh::s_MeshList; iter = iter->next)
@@ -4813,6 +4773,7 @@ void CD3D9Renderer::GetLogVBuffers()
 		int nTotal = 0;
 		string final;
 		char tmp[128];
+		pRM = iter->item<& CRenderMesh::m_Chain>();
 
 		static_assert(CRY_ARRAY_COUNT(sStreamNames) == VSF_NUM, "Invalid array size!");
 		for (int i = 0; i < VSF_NUM; i++)
@@ -4981,6 +4942,8 @@ IRenderAuxGeom* CD3D9Renderer::GetIRenderAuxGeom()
 
 IRenderAuxGeom* CD3D9Renderer::GetOrCreateIRenderAuxGeom(const CCamera* pCustomCamera)
 {
+	MEMSTAT_CONTEXT(EMemStatContextTypes::MSC_Other, 0, "CD3D9Renderer::GetOrCreateIRenderAuxGeom");
+
 #if defined(ENABLE_RENDER_AUX_GEOM)
 	auto auxGeom = m_auxGeomCBPool.GetOrCreateOneElement();
 
@@ -5067,11 +5030,6 @@ void CD3D9Renderer::DeleteAuxGeomCollectors()
 #endif
 }
 
-IColorGradingController* CD3D9Renderer::GetIColorGradingController()
-{
-	return m_pColorGradingControllerD3D;
-}
-
 IStereoRenderer* CD3D9Renderer::GetIStereoRenderer() const
 {
 	return m_pStereoRenderer;
@@ -5125,10 +5083,6 @@ void CD3D9Renderer::PostLevelUnload()
 #endif
 
 	CPoissonDiskGen::FreeMemory();
-	if (m_pColorGradingControllerD3D)
-	{
-		m_pColorGradingControllerD3D->FreeMemory();
-	}
 
 	CDynTextureSourceLayerActivator::ReleaseData();
 
@@ -5158,6 +5112,9 @@ public:
 	virtual void OnSystemEvent(ESystemEvent event, UINT_PTR wparam, UINT_PTR lparam)
 	{
 		static bool bInside = false;
+#if CRY_PLATFORM_DURANGO
+		static bool bWasConstrained = false;
+#endif
 		if (bInside)
 			return;
 		bInside = true;
@@ -5179,24 +5136,34 @@ public:
 
 #if CRY_PLATFORM_DURANGO
 		case ESYSTEM_EVENT_PLM_ON_CONSTRAINED:
+		{
+			if (!bWasConstrained)
 			{
 				ICVar* pWidth  = iConsole->GetCVar("r_CustomResWidth");
 				ICVar* pHeight = iConsole->GetCVar("r_CustomResHeight");
 
-				if (pWidth ) pWidth ->Set(pWidth ->GetIVal() * 9 / 10);
+				if (pWidth)  pWidth->Set(pWidth->GetIVal() * 9 / 10);
 				if (pHeight) pHeight->Set(pHeight->GetIVal() * 9 / 10);
+
+				bWasConstrained = true;
 			}
-			break;
+		}
+		break;
 
 		case ESYSTEM_EVENT_PLM_ON_FULL:
+		{
+			if (bWasConstrained)
 			{
 				ICVar* pWidth  = iConsole->GetCVar("r_CustomResWidth");
 				ICVar* pHeight = iConsole->GetCVar("r_CustomResHeight");
 
-				if (pWidth ) pWidth ->Set(pWidth ->GetIVal() * 10 / 9);
+				if (pWidth)  pWidth->Set(pWidth->GetIVal() * 10 / 9);
 				if (pHeight) pHeight->Set(pHeight->GetIVal() * 10 / 9);
+
+				bWasConstrained = false;
 			}
-			break;
+		}
+		break;
 #endif
 
 		case ESYSTEM_EVENT_LEVEL_LOAD_START:

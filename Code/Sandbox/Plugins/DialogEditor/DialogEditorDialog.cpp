@@ -353,8 +353,6 @@ void CDialogFolderCtrl::Reload()
 //////////////////////////////////////////////////////////////////////////
 void CDialogFolderCtrl::UpdateSCStatus(CTreeScriptRecord* pRec, CEditorDialogScript* pScript, bool bUseCached)
 {
-	uint32 scAttr = SCC_FILE_ATTRIBUTE_NORMAL;
-
 	int index = 0;
 
 	if (pRec->IsGroup())
@@ -623,13 +621,13 @@ class CDialogEditorDialogViewClass : public IViewPaneClass
 	//////////////////////////////////////////////////////////////////////////
 	// IClassDesc
 	//////////////////////////////////////////////////////////////////////////
-	virtual ESystemClassID SystemClassID()	 override { return ESYSTEM_CLASS_VIEWPANE; };
-	virtual const char*    ClassName()       override { return DIALOG_EDITOR_NAME; };
-	virtual const char*    Category()        override { return "Game"; };
+	virtual ESystemClassID SystemClassID()	 override { return ESYSTEM_CLASS_VIEWPANE; }
+	virtual const char*    ClassName()       override { return DIALOG_EDITOR_NAME; }
+	virtual const char*    Category()        override { return "Game"; }
 	virtual const char*    GetMenuPath()	 override { return "Deprecated"; }
-	virtual CRuntimeClass* GetRuntimeClass() override { return RUNTIME_CLASS(CDialogEditorDialog); };
-	virtual const char*    GetPaneTitle()    override { return _T(DIALOG_EDITOR_NAME); };
-	virtual bool           SinglePane()      override { return true; };
+	virtual CRuntimeClass* GetRuntimeClass() override { return RUNTIME_CLASS(CDialogEditorDialog); }
+	virtual const char*    GetPaneTitle()    override { return _T(DIALOG_EDITOR_NAME); }
+	virtual bool           SinglePane()      override { return true; }
 };
 
 REGISTER_CLASS_DESC(CDialogEditorDialogViewClass)

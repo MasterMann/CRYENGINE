@@ -6,7 +6,6 @@
 #include "Request.h"
 #include <CryAudio/IAudioSystem.h>
 #include <CrySystem/ISystem.h>
-#include <CrySystem/TimeValue.h>
 #include <CryInput/IInput.h>
 #include <concqueue/concqueue.hpp>
 
@@ -27,29 +26,25 @@ public:
 	// CryAudio::IAudioSystem
 	virtual void        Release() override;
 	virtual void        SetImpl(Impl::IImpl* const pIImpl, SRequestUserData const& userData = SRequestUserData::GetEmptyObject()) override;
-	virtual void        LoadTrigger(ControlId const triggerId, SRequestUserData const& userData = SRequestUserData::GetEmptyObject()) override;
-	virtual void        UnloadTrigger(ControlId const triggerId, SRequestUserData const& userData = SRequestUserData::GetEmptyObject()) override;
 	virtual void        ExecuteTriggerEx(SExecuteTriggerData const& triggerData, SRequestUserData const& userData = SRequestUserData::GetEmptyObject()) override;
 	virtual void        ExecuteTrigger(ControlId const triggerId, SRequestUserData const& userData = SRequestUserData::GetEmptyObject()) override;
 	virtual void        StopTrigger(ControlId const triggerId = InvalidControlId, SRequestUserData const& userData = SRequestUserData::GetEmptyObject()) override;
 	virtual void        SetParameter(ControlId const parameterId, float const value, SRequestUserData const& userData = SRequestUserData::GetEmptyObject()) override;
-	virtual void        SetGlobalParameter(ControlId const parameterId, float const value, SRequestUserData const& userData = SRequestUserData::GetEmptyObject()) override;
+	virtual void        SetParameterGlobally(ControlId const parameterId, float const value, SRequestUserData const& userData = SRequestUserData::GetEmptyObject()) override;
 	virtual void        SetSwitchState(ControlId const switchId, SwitchStateId const switchStateId, SRequestUserData const& userData = SRequestUserData::GetEmptyObject()) override;
-	virtual void        SetGlobalSwitchState(ControlId const switchId, SwitchStateId const switchStateId, SRequestUserData const& userData = SRequestUserData::GetEmptyObject()) override;
-	virtual void        PlayFile(SPlayFileInfo const& playFileInfo, SRequestUserData const& userData = SRequestUserData::GetEmptyObject()) override;
-	virtual void        StopFile(char const* const szName, SRequestUserData const& userData = SRequestUserData::GetEmptyObject()) override;
-	virtual void        ReportStartedFile(CStandaloneFile& standaloneFile, bool const bSuccessfullyStarted, SRequestUserData const& userData = SRequestUserData::GetEmptyObject()) override;
-	virtual void        ReportStoppedFile(CStandaloneFile& standaloneFile, SRequestUserData const& userData = SRequestUserData::GetEmptyObject()) override;
-	virtual void        ReportFinishedEvent(CEvent& event, bool const bSuccess, SRequestUserData const& userData = SRequestUserData::GetEmptyObject()) override;
-	virtual void        ReportVirtualizedEvent(CEvent& event, SRequestUserData const& userData = SRequestUserData::GetEmptyObject()) override;
-	virtual void        ReportPhysicalizedEvent(CEvent& event, SRequestUserData const& userData = SRequestUserData::GetEmptyObject()) override;
+	virtual void        SetSwitchStateGlobally(ControlId const switchId, SwitchStateId const switchStateId, SRequestUserData const& userData = SRequestUserData::GetEmptyObject()) override;
+	virtual void        ReportStartedTriggerConnectionInstance(TriggerInstanceId const triggerInstanceId, ETriggerResult const result, SRequestUserData const& userData = SRequestUserData::GetEmptyObject()) override;
+	virtual void        ReportFinishedTriggerConnectionInstance(TriggerInstanceId const triggerInstanceId, ETriggerResult const result, SRequestUserData const& userData = SRequestUserData::GetEmptyObject()) override;
+	virtual void        ReportPhysicalizedObject(Impl::IObject* const pIObject, SRequestUserData const& userData = SRequestUserData::GetEmptyObject()) override;
+	virtual void        ReportVirtualizedObject(Impl::IObject* const pIObject, SRequestUserData const& userData = SRequestUserData::GetEmptyObject()) override;
 	virtual void        StopAllSounds(SRequestUserData const& userData = SRequestUserData::GetEmptyObject()) override;
-	virtual void        Refresh(char const* const szLevelName, SRequestUserData const& userData = SRequestUserData::GetEmptyObject()) override;
 	virtual void        PreloadSingleRequest(PreloadRequestId const id, bool const bAutoLoadOnly, SRequestUserData const& userData = SRequestUserData::GetEmptyObject()) override;
 	virtual void        UnloadSingleRequest(PreloadRequestId const id, SRequestUserData const& userData = SRequestUserData::GetEmptyObject()) override;
+	virtual void        ActivateContext(ContextId const contextId) override;
+	virtual void        DeactivateContext(ContextId const contextId) override;
 	virtual void        LoadSetting(ControlId const id, SRequestUserData const& userData = SRequestUserData::GetEmptyObject()) override;
 	virtual void        UnloadSetting(ControlId const id, SRequestUserData const& userData = SRequestUserData::GetEmptyObject()) override;
-	virtual void        ReloadControlsData(char const* const szFolderPath, char const* const szLevelName, SRequestUserData const& userData = SRequestUserData::GetEmptyObject()) override;
+	virtual void        ReloadControlsData(SRequestUserData const& userData = SRequestUserData::GetEmptyObject()) override;
 	virtual void        AddRequestListener(void (*func)(SRequestInfo const* const), void* const pObjectToListenTo, ESystemEvents const eventMask) override;
 	virtual void        RemoveRequestListener(void (*func)(SRequestInfo const* const), void* const pObjectToListenTo) override;
 	virtual void        ExternalUpdate() override;
@@ -58,14 +53,14 @@ public:
 	virtual void        ReleaseListener(IListener* const pIListener) override;
 	virtual IObject*    CreateObject(SCreateObjectData const& objectData = SCreateObjectData::GetEmptyObject()) override;
 	virtual void        ReleaseObject(IObject* const pIObject) override;
-	virtual void        GetFileData(char const* const szName, SFileData& fileData) override;
 	virtual void        GetTriggerData(ControlId const triggerId, STriggerData& triggerData) override;
 	virtual void        GetImplInfo(SImplInfo& implInfo) override;
 	virtual void        Log(ELogType const type, char const* const szFormat, ...) override;
 
-	// Below data is only used when INCLUDE_AUDIO_PRODUCTION_CODE is defined!
+	// Below data is only used when CRY_AUDIO_USE_DEBUG_CODE is defined!
 	virtual void ExecutePreviewTrigger(ControlId const triggerId) override;
 	virtual void ExecutePreviewTriggerEx(Impl::ITriggerInfo const& triggerInfo) override;
+	virtual void ExecutePreviewTriggerEx(XmlNodeRef const pNode) override;
 	virtual void StopPreviewTrigger() override;
 	// ~CryAudio::IAudioSystem
 
@@ -79,9 +74,9 @@ public:
 
 	bool Initialize();
 	void PushRequest(CRequest const& request);
-	void ParseControlsData(char const* const szFolderPath, EDataScope const dataScope, SRequestUserData const& userData = SRequestUserData::GetEmptyObject());
-	void ParsePreloadsData(char const* const szFolderPath, EDataScope const dataScope, SRequestUserData const& userData = SRequestUserData::GetEmptyObject());
-	void AutoLoadSetting(EDataScope const dataScope, SRequestUserData const& userData = SRequestUserData::GetEmptyObject());
+	void ParseControlsData(char const* const szFolderPath, char const* const szContextName, ContextId const contextId, SRequestUserData const& userData = SRequestUserData::GetEmptyObject());
+	void ParsePreloadsData(char const* const szFolderPath, ContextId const contextId, SRequestUserData const& userData = SRequestUserData::GetEmptyObject());
+	void AutoLoadSetting(ContextId const contextId, SRequestUserData const& userData = SRequestUserData::GetEmptyObject());
 
 	void InternalUpdate();
 
@@ -100,10 +95,15 @@ private:
 	ERequestStatus ProcessListenerRequest(SRequestData const* const pPassedRequestData);
 	void           NotifyListener(CRequest const& request);
 	ERequestStatus HandleSetImpl(Impl::IImpl* const pIImpl);
-	ERequestStatus HandleRefresh(char const* const szLevelName);
 	void           SetImplLanguage();
+	void           HandleActivateContext(ContextId const contextId);
+	void           HandleDeactivateContext(ContextId const contextId);
+	void           ReportContextActivated(ContextId const id);
+	void           ReportContextDeactivated(ContextId const id);
 	void           SetCurrentEnvironmentsOnObject(CObject* const pObject, EntityId const entityToIgnore);
+#if defined(CRY_AUDIO_USE_OCCLUSION)
 	void           SetOcclusionType(CObject& object, EOcclusionType const occlusionType) const;
+#endif // CRY_AUDIO_USE_OCCLUSION
 	void           ExecuteDefaultTrigger(EDefaultTriggerType const type, SRequestUserData const& userData = SRequestUserData::GetEmptyObject());
 
 	static void    OnCallback(SRequestInfo const* const pRequestInfo);
@@ -114,7 +114,6 @@ private:
 	std::atomic<uint32>   m_externalThreadFrameId{ 0 };
 	uint32                m_lastExternalThreadFrameId = 0;
 	uint16                m_objectPoolSize = 0;
-	uint16                m_eventPoolSize = 0;
 	SImplInfo             m_implInfo;
 	CMainThread           m_mainThread;
 
@@ -124,25 +123,26 @@ private:
 	CryEvent              m_mainEvent;
 	CryEvent              m_audioThreadWakeupEvent;
 
-#if defined(ENABLE_AUDIO_LOGGING)
-	int m_loggingOptions;
-#endif // ENABLE_AUDIO_LOGGING
-
-#if defined(INCLUDE_AUDIO_PRODUCTION_CODE)
+#if defined(CRY_AUDIO_USE_DEBUG_CODE)
 public:
 
 	void RetriggerControls(SRequestUserData const& userData = SRequestUserData::GetEmptyObject());
 	void ResetRequestCount();
 	void ScheduleIRenderAuxGeomForRendering(IRenderAuxGeom* pRenderAuxGeom);
+	void UpdateDebugInfo();
 
 private:
+
 	void SubmitLastIRenderAuxGeomForRendering();
 	void DrawDebug();
 	void HandleDrawDebug();
+	void HandleUpdateDebugInfo();
 	void HandleRetriggerControls();
+	void HandleRefresh();
 
 	std::atomic<IRenderAuxGeom*> m_currentRenderAuxGeom{ nullptr };
 	std::atomic<IRenderAuxGeom*> m_lastRenderAuxGeom{ nullptr };
-#endif // INCLUDE_AUDIO_PRODUCTION_CODE
+	std::atomic_bool             m_canDraw{ true };
+#endif // CRY_AUDIO_USE_DEBUG_CODE
 };
 } // namespace CryAudio

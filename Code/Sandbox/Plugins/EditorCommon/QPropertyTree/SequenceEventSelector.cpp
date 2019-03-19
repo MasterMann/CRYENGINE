@@ -10,18 +10,21 @@
 
 #include <CryAnimation/ICryAnimation.h>
 
-dll_string SequenceEventSelector(const SResourceSelectorContext& x, const char* previousValue, IAnimSequence* pSequence)
+SResourceSelectionResult SequenceEventSelector(const SResourceSelectorContext& context, const char* previousValue, IAnimSequence* pSequence)
 {
+	SResourceSelectionResult result{ false, previousValue };
 	if (!pSequence)
-		return previousValue;
+	{
+		return result;
+	}
 
 	CSequenceEventsModel* pModel = new CSequenceEventsModel(*pSequence);
-	CTreeViewDialog dialog(x.parentWidget);
+	CTreeViewDialog dialog(context.parentWidget);
 	QString selectedValue(previousValue);
 
 	dialog.Initialize(pModel, 0);
 
-	for (int32 row = pModel->rowCount(); row--; )
+	for (int32 row = pModel->rowCount(); row--;)
 	{
 		const QModelIndex index = pModel->index(row, 0);
 		if (pModel->data(index, Qt::DisplayRole).value<QString>() == selectedValue)
@@ -30,25 +33,34 @@ dll_string SequenceEventSelector(const SResourceSelectorContext& x, const char* 
 		}
 	}
 
-	if (dialog.exec())
+	result.selectionAccepted = dialog.exec();
+	if (result.selectionAccepted)
 	{
 		QModelIndex index = dialog.GetSelected();
 		if (index.isValid())
 		{
-			return index.data().value<QString>().toLocal8Bit().data();
+			result.selectedResource = index.data().value<QString>().toLocal8Bit().data();
+			return result;
 		}
 	}
 
-	return previousValue;
+	return result;
 }
 
-dll_string ValidateSequenceEvent(const SResourceSelectorContext& x, const char* newValue, const char* previousValue, IAnimSequence* pSequence)
+SResourceValidationResult ValidateSequenceEvent(const SResourceSelectorContext& context, const char* newValue, const char* previousValue, IAnimSequence* pSequence)
 {
+	SResourceValidationResult result{ false, previousValue };
+
 	if (!newValue || !*newValue)
-		return dll_string();
+	{
+		result.validatedResource = "";
+		return result;
+	}
 
 	if (!pSequence)
-		return previousValue;
+	{
+		return result;
+	}
 
 	CSequenceEventsModel* pModel = new CSequenceEventsModel(*pSequence);
 	int itemCount = pModel->rowCount();
@@ -56,10 +68,14 @@ dll_string ValidateSequenceEvent(const SResourceSelectorContext& x, const char* 
 	{
 		QModelIndex index = pModel->index(i, 0);
 		if (pModel->data(index, Qt::DisplayRole).value<QString>() == newValue)
-			return newValue;
+		{
+			result.validatedResource = newValue;
+			result.isValid = true;
+			return result;
+		}
 	}
 
-	return previousValue;
+	return result;
 }
 
 REGISTER_RESOURCE_VALIDATING_SELECTOR("SequenceEvent", SequenceEventSelector, ValidateSequenceEvent, "")

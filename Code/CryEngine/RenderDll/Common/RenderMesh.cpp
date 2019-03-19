@@ -319,10 +319,11 @@ namespace
 
 CryCriticalSection CRenderMesh::m_sLinkLock;
 
-util::list<CRenderMesh> CRenderMesh::s_MeshList;
-util::list<CRenderMesh> CRenderMesh::s_MeshGarbageList[MAX_RELEASED_MESH_FRAMES];
-util::list<CRenderMesh> CRenderMesh::s_MeshDirtyList[2];
-util::list<CRenderMesh> CRenderMesh::s_MeshModifiedList[2];
+util::list<CRenderMesh>        CRenderMesh::s_MeshList;
+util::list<CRenderMesh>        CRenderMesh::s_MeshGarbageList[MAX_RELEASED_MESH_FRAMES];
+util::list<CRenderMesh>        CRenderMesh::s_MeshDirtyList[2];
+util::list<CRenderMesh>        CRenderMesh::s_MeshModifiedList[2];
+concqueue::mpsc_queue_t<void*> CRenderMesh::s_FreeableMeshDataList;
 
 int CRenderMesh::Release()
 {
@@ -616,7 +617,9 @@ void *CRenderMesh::LockVB(int nStream, uint32 nFlags, int nOffset, int nVerts, i
 	SREC_AUTO_LOCK(m_sResLock);//need lock as resource must not be updated concurrently
 	SMeshStream* MS = GetVertexStream(nStream, nFlags);
 
+#if defined(USE_VBIB_PUSH_DOWN) || RENDERMESH_BUFFER_ENABLE_DIRECT_ACCESS
 	int nFrame = GetCurrentFrameID();
+#endif
 
 #if defined(USE_VBIB_PUSH_DOWN)
 	m_VBIBFramePushID = nFrame;
@@ -1563,7 +1566,18 @@ void CRenderMesh::ComputeSkinningCreateBindPoseAndMorphBuffers(CMesh& mesh)
 		else
 			vertices[i].pos = mesh.m_pPositionsF16[i].ToVec3();
 
-		vertices[i].qtangent = mesh.m_pQTangents[i].GetQ();
+		if (mesh.m_pQTangents)
+			vertices[i].qtangent = mesh.m_pQTangents[i].GetQ();
+		else if (mesh.m_pTangents)
+		{
+			// This shouldn't be done here...
+			Vec4sf t, b;
+			mesh.m_pTangents[i].ExportTo(t, b);
+			SPipQTangents q;
+			MeshTangentsFrameToQTangents(&t, sizeof(t), &b, sizeof(b), 1, &q, sizeof(q));
+			vertices[i].qtangent = q.GetQ();
+		}
+
 		vertices[i].uv = mesh.m_pTexCoord[i].GetUV();
 		vertices[i].morphDeltaOffset = haveDeltaMorphs ? mesh.m_verticesDeltaOffsets[i] : 0;
 		vertices[i].triOffset = count;
@@ -1824,7 +1838,6 @@ int CRenderMesh::GetRenderChunksCount(IMaterial * pMaterial, int & nRenderTrisCo
   int nCount = 0;
   nRenderTrisCount = 0;
 
-  CRenderer *rd = gRenDev;
   const uint32 ni = (uint32)m_Chunks.size();
   for (uint32 i=0; i<ni; i++)
   {
@@ -2364,7 +2377,7 @@ void CRenderMesh::BuildAdjacency(const VertexFormat *pVerts, unsigned int nVerts
 	std::vector<int> arrSortedVertIDs;
 	// we allocate a bit more (by one) because we will need extra element for scan operation (lower)
 	arrSortedVertIDs.resize(nVerts + 1);
-	int *_iSortedVerts = &arrSortedVertIDs[0];
+
 	for (int iv = 0; iv < nVerts; ++iv)
 		arrSortedVertIDs[iv] = iv;
 
@@ -2401,7 +2414,7 @@ void CRenderMesh::BuildAdjacency(const VertexFormat *pVerts, unsigned int nVerts
 	std::vector<int> &arrConnectedTrianglesCount = arrSortedVertIDs;
 	for (int i = 0; i < arrConnectedTrianglesCount.size(); ++i)
 		arrConnectedTrianglesCount[i] = 0;
-	int *_nConnectedTriangles = &arrConnectedTrianglesCount[0];
+
 	for (int it = 0; it < nTrgs; ++it)
 	{
 		const vtx_idx *pTrg = &pIndexBuffer[it * 3];
@@ -2515,14 +2528,11 @@ bool CRenderMesh::RT_CheckUpdate(CRenderMesh *pVContainer, InputLayoutHandle eVF
 {
 	CRY_ASSERT(gRenDev->m_pRT->IsRenderThread());
 
-	const int threadId = gRenDev->GetRenderThreadID();
 	int nFrame = gRenDev->GetRenderFrameID();
 	
 	MEMSTAT_CONTEXT(EMemStatContextTypes::MSC_RenderMeshType, 0, this->GetTypeName());
 	MEMSTAT_CONTEXT(EMemStatContextTypes::MSC_RenderMesh, 0, this->GetSourceName());
 	PrefetchLine(&m_IBStream, 0);
-
-	bool bSkinned = (m_nFlags & (FRM_SKINNED | FRM_SKINNEDNEXTDRAW)) != 0;
 
 	m_nFlags &= ~FRM_SKINNEDNEXTDRAW;
 
@@ -2662,7 +2672,6 @@ bool CRenderMesh::RT_CheckUpdate(CRenderMesh *pVContainer, InputLayoutHandle eVF
 							}
 							else if (i != VSF_HWSKIN_INFO)
 							{
-								int nnn = 0;
 								if (pMS->m_nID == ~0u)
 									return false;
 							}
@@ -2908,40 +2917,45 @@ bool CRenderMesh::UpdateVidIndices(SMeshStream& IBStream, bool stall)
 	MEMSTAT_CONTEXT(EMemStatContextTypes::MSC_RenderMesh, 0, this->GetSourceName());
 	SCOPED_RENDERER_ALLOCATION_NAME_HINT( GetSourceName() );
 
-  assert(gRenDev->m_pRT->IsRenderThread());
+	assert(gRenDev->m_pRT->IsRenderThread());
 
-  SREC_AUTO_LOCK(m_sResLock);
+	SREC_AUTO_LOCK(m_sResLock);
 
-  assert(gRenDev->m_pRT->IsRenderThread());
+	assert(gRenDev->m_pRT->IsRenderThread());
 
-  int nInds = m_nInds;
+	int nInds = m_nInds;
 
-  if (!nInds)
+	if (!nInds)
 	{
 		// 0 size index buffer creation crashes on 360
 		assert( nInds );
 		return false;
 	}
 
-  if (IBStream.m_nElements != m_nInds && _HasIBStream())
-    ReleaseIB();
+	if (IBStream.m_nElements != m_nInds && _HasIBStream())
+		ReleaseIB();
 
-  if (IBStream.m_nID == ~0u)
-  {
-    IBStream.m_nID = gRenDev->m_DevBufMan.Create(BBT_INDEX_BUFFER, (BUFFER_USAGE)m_eType, nInds * sizeof(vtx_idx));
-    IBStream.m_nElements = m_nInds;
+	if (IBStream.m_nID == ~0u)
+	{
+		IBStream.m_nID = gRenDev->m_DevBufMan.Create(BBT_INDEX_BUFFER, (BUFFER_USAGE)m_eType, nInds * sizeof(vtx_idx));
+		IBStream.m_nElements = m_nInds;
 		IBStream.m_nFrameCreate = GetCurrentFrameID();
-  }
-  if (IBStream.m_nID != ~0u)
-  {
-    UnlockIndexStream();
-    if (IBStream.m_pUpdateData)
-    {
-      bool bRes = true;
-      return gRenDev->m_DevBufMan.UpdateBuffer(IBStream.m_nID, IBStream.m_pUpdateData, AlignedMeshDataSize(m_nInds * sizeof(vtx_idx)));
-    }
-  }
-  return false;
+	}
+	if (IBStream.m_nID != ~0u)
+	{
+		UnlockIndexStream();
+		if (IBStream.m_pUpdateData)
+		{
+			bool bRes = gRenDev->m_DevBufMan.UpdateBuffer(IBStream.m_nID, IBStream.m_pUpdateData, AlignedMeshDataSize(m_nInds * sizeof(vtx_idx)));
+			if (CRendererCVars::CV_r_MeshPoolForceFreeAfterUpdate)
+			{
+				CRenderMesh::s_FreeableMeshDataList.enqueue(IBStream.m_pUpdateData);
+				IBStream.m_pUpdateData = nullptr;
+			}
+			return bRes;
+		}
+	}
+	return false;
 }
 
 bool CRenderMesh::CreateVidVertices(int nVerts, InputLayoutHandle eVF, int nStream)
@@ -2951,7 +2965,6 @@ bool CRenderMesh::CreateVidVertices(int nVerts, InputLayoutHandle eVF, int nStre
 	SCOPED_RENDERER_ALLOCATION_NAME_HINT( GetSourceName() );
 
 	SREC_AUTO_LOCK(m_sResLock);
-	CRenderer* pRend = gRenDev;
 
   if (!nVerts && eVF==InputLayoutHandle::Unspecified)
   {
@@ -2973,32 +2986,38 @@ bool CRenderMesh::UpdateVidVertices(int nStream)
 	MEMSTAT_CONTEXT(EMemStatContextTypes::MSC_RenderMeshType, 0, this->GetTypeName());
 	MEMSTAT_CONTEXT(EMemStatContextTypes::MSC_RenderMesh, 0, this->GetSourceName());
 
-  assert(gRenDev->m_pRT->IsRenderThread());
+	assert(gRenDev->m_pRT->IsRenderThread());
 
-  SREC_AUTO_LOCK(m_sResLock);
+	SREC_AUTO_LOCK(m_sResLock);
 
-  assert(nStream < VSF_NUM);
-  SMeshStream* pMS = GetVertexStream(nStream, FSL_WRITE);
+	assert(nStream < VSF_NUM);
+	SMeshStream* pMS = GetVertexStream(nStream, FSL_WRITE);
 
-  if (m_nVerts != pMS->m_nElements && _HasVBStream(nStream))
-    ReleaseVB(nStream);
+	if (m_nVerts != pMS->m_nElements && _HasVBStream(nStream))
+		ReleaseVB(nStream);
 
-  if (pMS->m_nID==~0u)
-  {
+	if (pMS->m_nID == ~0u)
+	{
 		if (!CreateVidVertices(m_nVerts, m_eVF, nStream))
 			return false;
-  }
-	if (pMS->m_nID!=~0u)
-  {
+	}
+	if (pMS->m_nID != ~0u)
+	{
 		UnlockStream(nStream);
-    if (pMS->m_pUpdateData)
-    {
-			return gRenDev->m_DevBufMan.UpdateBuffer(pMS->m_nID, pMS->m_pUpdateData, AlignedMeshDataSize(GetStreamSize(nStream)));
-    }
-    else
-    {
-      assert(0);
-    }
+		if (pMS->m_pUpdateData)
+		{
+			bool bRes = gRenDev->m_DevBufMan.UpdateBuffer(pMS->m_nID, pMS->m_pUpdateData, AlignedMeshDataSize(GetStreamSize(nStream)));
+			if (CRendererCVars::CV_r_MeshPoolForceFreeAfterUpdate)
+			{
+				CRenderMesh::s_FreeableMeshDataList.enqueue(pMS->m_pUpdateData);
+				pMS->m_pUpdateData = nullptr;
+			}
+			return bRes;
+		}
+		else
+		{
+			assert(0);
+		}
 	}
 	return false;
 }
@@ -3516,7 +3535,6 @@ void CRenderMesh::UpdateBBoxFromMesh()
 
   int nVertCount = _GetVertexContainer()->GetVerticesCount();
   int nPosStride=0;
-  int nIndCount = GetIndicesCount();
   const byte * pPositions = GetPosPtr(nPosStride, FSL_READ);
   const vtx_idx * pIndices = GetIndexPtr(FSL_READ);
 
@@ -3955,8 +3973,6 @@ void CRenderMesh::DebugDraw( const struct SGeometryDebugDrawInfo &info,uint32 nV
 	IRenderAuxGeom *pRenderAuxGeom = gEnv->pRenderer->GetIRenderAuxGeom();
 	SScopedMeshDataLock _lock(this);
 
-	const Matrix34 &mat = info.tm;
-
 	const bool bNoCull = info.bNoCull;
 	const bool bNoLines = info.bNoLines;
 	const bool bDrawInFront = info.bDrawInFront;
@@ -4009,7 +4025,9 @@ void CRenderMesh::DebugDraw( const struct SGeometryDebugDrawInfo &info,uint32 nV
 		int posStride = 1;
 		const byte *pPositions = GetPosPtr(posStride, FSL_READ);
 		const vtx_idx *pIndices = GetIndexPtr(FSL_READ);
+#if defined(USE_CRY_ASSERT)
 		const uint32 numVertices = GetVerticesCount();
+#endif
 		const uint32 indexStep = 3;
 		uint32 numIndices = pChunk->nNumIndices;
 
@@ -4110,28 +4128,28 @@ void CRenderMesh::PrintMeshLeaks()
 
 bool CRenderMesh::ClearStaleMemory(bool bAcquireLock, int threadId)
 {
-  MEMORY_SCOPE_CHECK_HEAP();
-  CRY_PROFILE_FUNCTION(PROFILE_RENDERER);
+	MEMORY_SCOPE_CHECK_HEAP();
+	CRY_PROFILE_FUNCTION(PROFILE_RENDERER);
 	bool cleared = false; 
 	bool bKeepSystem = false; 
 	AUTO_LOCK(m_sLinkLock);
 	// Clean up the stale mesh temporary data
-  for (util::list<CRenderMesh>* iter=s_MeshDirtyList[threadId].next, *pos=iter->next; iter != &s_MeshDirtyList[threadId]; iter=pos, pos=pos->next)
-  {
+	for (util::list<CRenderMesh>* iter=s_MeshDirtyList[threadId].next, *pos=iter->next; iter != &s_MeshDirtyList[threadId]; iter=pos, pos=pos->next)
+	{
 		CRenderMesh* pRM = iter->item<&CRenderMesh::m_Dirty>(threadId);
 		if (pRM->m_sResLock.TryLock() == false)
 			continue;
 		// If the mesh data is still being read, skip it. The stale data will be picked up at a later point
 		if (pRM->m_nThreadAccessCounter)
 		{
-#     if !defined(_RELEASE) && defined(RM_CATCH_EXCESSIVE_LOCKS)
-			if (gEnv->pTimer->GetAsyncTime().GetSeconds()-pRM->m_lockTime > 32.f)
+#if !defined(_RELEASE) && defined(RM_CATCH_EXCESSIVE_LOCKS)
+			if (gEnv->pTimer->GetAsyncTime().GetSeconds() - pRM->m_lockTime > 32.f)
 			{
-				CryError("data lock for mesh '%s:%s' held longer than 32 seconds", (pRM->m_sType?pRM->m_sType:"unknown"), (pRM->m_sSource?pRM->m_sSource:"unknown"));
+				CryError("data lock for mesh '%s:%s' held longer than 32 seconds", (pRM->m_sType ? pRM->m_sType : "unknown"), (pRM->m_sSource ? pRM->m_sSource : "unknown"));
 				if (CRenderer::CV_r_BreakOnError)
 					__debugbreak();
 			}
-#     endif
+#endif
 			goto dirty_done;
 		}
 
@@ -4159,18 +4177,27 @@ bool CRenderMesh::ClearStaleMemory(bool bAcquireLock, int threadId)
 #if RENDERMESH_BUFFER_ENABLE_DIRECT_ACCESS
 		if (!bKeepSystem) 
 		{
-			for (int i=0; i<VSF_NUM; i++)
+			for (int i = 0; i < VSF_NUM; i++)
 				pRM->FreeVB(i);
 			pRM->FreeIB();
-			cleared = true; 
+			cleared = true;
 		}
-		#endif
+#endif
 
 		// ToDo: only remove this mesh from the dirty list if no stream contains dirty data anymore
 		pRM->m_Dirty[threadId].erase();
-	dirty_done:
+dirty_done:
 		pRM->m_sResLock.Unlock();
-  }
+	}
+
+	if (CRendererCVars::CV_r_MeshPoolForceFreeAfterUpdate && threadId == gRenDev->GetMainThreadID())
+	{
+		void* pMeshData = nullptr;
+		while (CRenderMesh::s_FreeableMeshDataList.dequeue(pMeshData))
+		{
+			FreeMeshData(pMeshData);
+		}
+	}
 
 	return cleared;
 }
@@ -4255,8 +4282,7 @@ void CRenderMesh::Tick(uint numFrames)
 
 	MEMORY_SCOPE_CHECK_HEAP();
 	ASSERT_IS_RENDER_THREAD(gRenDev->m_pRT)
-		
-	bool bKeepSystem = false;
+
 	const threadID threadId = gRenDev->m_pRT->IsMultithreaded() ? gRenDev->GetRenderThreadID() : threadID(1);
 	int nFrame = GetCurrentFrameID();
 
@@ -4895,8 +4921,7 @@ void CRenderMesh::Render(CRenderObject* pObj, const SRenderingPassInfo& passInfo
 	IF(!CanUpdate(), 0)
 	return;
 
-	CRenderer* RESTRICT_POINTER rd = gRenDev;
-	bool bSkinned                  = (GetChunksSkinned().size() && (pObj->m_ObjFlags & (FOB_SKINNED)));
+	bool bSkinned = (GetChunksSkinned().size() && (pObj->m_ObjFlags & (FOB_SKINNED)));
 
 	hidemaskLoc nMeshSubSetMask = 0;
 #if !defined(_RELEASE)
@@ -5238,7 +5263,6 @@ void SMeshSubSetIndicesJobEntry::CreateSubSetRenderMesh()
 	uint32 nChunkCount              = renderChunks.size();
 
 	SScopedMeshDataLock _lock(pSrcMesh);
-	int nIndCount = pSrcMesh->GetIndicesCount();
 	if (vtx_idx* pInds = pSrcMesh->GetIndexPtr(FSL_READ))
 	{
 		TRenderChunkArray newChunks;

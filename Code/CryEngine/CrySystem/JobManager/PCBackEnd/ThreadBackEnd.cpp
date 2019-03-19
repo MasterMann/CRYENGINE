@@ -14,7 +14,6 @@
 #include "../../System.h"
 #include "../../CPUDetect.h"
 #include <thread>
-#include <CrySystem/Profilers/FrameProfiler/FrameProfiler_JobSystem.h>
 
 ///////////////////////////////////////////////////////////////////////////////
 JobManager::ThreadBackEnd::CThreadBackEnd::CThreadBackEnd()
@@ -126,7 +125,9 @@ bool JobManager::ThreadBackEnd::CThreadBackEnd::ShutDown()
 void JobManager::ThreadBackEnd::CThreadBackEnd::AddJob(JobManager::CJobDelegator& crJob, const JobManager::TJobHandle cJobHandle, JobManager::SInfoBlock& rInfoBlock)
 {
 	uint32 nJobPriority = crJob.GetPriorityLevel();
+#if !defined(_RELEASE) || defined(JOBMANAGER_SUPPORT_FRAMEPROFILER)
 	CJobManager* __restrict pJobManager = CJobManager::Instance();
+#endif
 
 	/////////////////////////////////////////////////////////////////////////////
 	// Acquire Infoblock to use
@@ -262,9 +263,11 @@ void JobManager::ThreadBackEnd::CThreadBackEndWorkerThread::ThreadEntry()
 #endif
 
 	uint64 nTicksInJobExecution = 0;
-	const float fMinTimeInJobExecution = 1.0f;
 
+#if !defined(_RELEASE) || defined(PERFORMANCE_BUILD)
 	CJobManager* __restrict pJobManager = CJobManager::Instance();
+#endif
+
 	do
 	{
 		SInfoBlock infoBlock;
@@ -361,7 +364,6 @@ void JobManager::ThreadBackEnd::CThreadBackEndWorkerThread::ThreadEntry()
 
 				// 2. Wait till the produces has finished writing all data to the SInfoBlock
 				JobManager::detail::SJobQueueSlotState* pJobInfoBlockState = &m_rJobQueue.jobInfoBlockStates[nPriorityLevel][nJobSlot];
-				int iter = 0;
 				while (!pJobInfoBlockState->IsReady())
 				{
 					//CRY_PROFILE_REGION(PROFILE_SYSTEM, "JobWorkerThread: About to sleep");
@@ -395,7 +397,8 @@ void JobManager::ThreadBackEnd::CThreadBackEndWorkerThread::ThreadEntry()
 		// store job start time
 #if defined(JOBMANAGER_SUPPORT_PROFILING)
 		SJobProfilingData* pJobProfilingData = gEnv->GetJobManager()->GetProfilingData(infoBlock.profilerIndex);
-		pJobProfilingData->nStartTime = gEnv->pTimer->GetAsyncTime();
+		pJobProfilingData->startTime = gEnv->pTimer->GetAsyncTime();
+		pJobProfilingData->isWaiting = false;
 		pJobProfilingData->nWorkerThread = GetWorkerThreadId();
 #endif
 
@@ -415,13 +418,12 @@ void JobManager::ThreadBackEnd::CThreadBackEndWorkerThread::ThreadEntry()
 
 			cry_sprintf(job_info, "%s (Prio %u)", jobName, nPriorityLevel);
 
-			CRYPROFILE_SCOPE_PROFILE_MARKER(job_info);
 			CRYPROFILE_SCOPE_PLATFORM_MARKER(job_info);
 #endif
-
 			uint64 nJobStartTicks = CryGetTicks();
-
+			
 			(*infoBlock.jobInvoker)(infoBlock.GetParamAddress());
+			
 			nTicksInJobExecution += CryGetTicks() - nJobStartTicks;
 		}
 
@@ -437,7 +439,7 @@ void JobManager::ThreadBackEnd::CThreadBackEndWorkerThread::ThreadEntry()
 			pJobState->SetStopped();
 		}
 #if defined(JOBMANAGER_SUPPORT_PROFILING)
-		pJobProfilingData->nEndTime = gEnv->pTimer->GetAsyncTime();
+		pJobProfilingData->endTime = gEnv->pTimer->GetAsyncTime();
 #endif
 
 	}

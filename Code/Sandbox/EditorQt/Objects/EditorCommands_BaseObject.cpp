@@ -1,13 +1,6 @@
 // Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 #include <StdAfx.h>
 
-// EditorCommon
-#include <ICommandManager.h>
-#include <IUndoObject.h>
-#include <Controls/QuestionDialog.h>
-#include <FileDialogs/SystemFileDialog.h>
-#include <Objects/ObjectLoader.h>
-
 // Sandbox
 #include "IEditorImpl.h"
 #include "Objects/ObjectManager.h"
@@ -21,6 +14,13 @@
 #include "Util/CubemapUtils.h"
 #include "Vegetation/VegetationMap.h"
 #include "Dialogs/DuplicatedObjectsHandlerDlg.h"
+
+// EditorCommon
+#include <Commands/ICommandManager.h>
+#include <IUndoObject.h>
+#include <Controls/QuestionDialog.h>
+#include <FileDialogs/SystemFileDialog.h>
+#include <Objects/ObjectLoader.h>
 
 // CryCommon
 #include <CrySystem/ICryLink.h>
@@ -416,15 +416,15 @@ std::vector<std::string> PyGetObjectChildren(const char* pName)
 	{
 		throw std::runtime_error(string("\"") + pName + "\" is an invalid object.");
 	}
-	std::vector<_smart_ptr<CBaseObject>> objectVector;
+	std::vector<_smart_ptr<CBaseObject>> descendants;
 	std::vector<std::string> result;
-	pObject->GetAllChildren(objectVector);
-	if (objectVector.empty())
+	pObject->GetAllDescendants(descendants);
+	if (descendants.empty())
 	{
 		return result;
 	}
 
-	for (std::vector<_smart_ptr<CBaseObject>>::iterator it = objectVector.begin(); it != objectVector.end(); ++it)
+	for (std::vector<_smart_ptr<CBaseObject>>::iterator it = descendants.begin(); it != descendants.end(); ++it)
 	{
 		result.push_back(static_cast<std::string>(it->get()->GetName()));
 	}
@@ -588,7 +588,6 @@ void ValidatePositions()
 	std::vector<CBaseObject*> foundObjects;
 
 	std::vector<CryGUID> objIDs;
-	bool reportVeg = false;
 
 	for (int i1 = 0; i1 < objCount; ++i1)
 	{
@@ -791,7 +790,7 @@ void LoadObjectsFromGrpFile()
 	}
 
 	ar.LoadInCurrentLayer(true);
-	pObjectManager->LoadObjects(ar, true);
+	pObjectManager->CreateAndSelectObjects(ar);
 	GetIEditorImpl()->SetModifiedFlag();
 }
 }

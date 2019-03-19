@@ -3,6 +3,7 @@
 #include "StdAfx.h"
 #include <CryMath/Range.h>
 #include "ShadowMap.h"
+#include "HeightMapAO.h"
 #include "D3DPostProcess.h"
 
 #include "Common/Include_HLSL_CPP_Shared.h"
@@ -18,24 +19,24 @@
 #endif
 
 // *INDENT-OFF*
-ETEX_Format CShadowMapStage::GetShadowTexFormat(EPass passID) const
+ETEX_Format CShadowMapStage::GetShadowTexFormat(const SShadowConfig& shadowConfig, EPass passID) const
 {
 	switch(passID)
 	{
 	case ePass_DirectionalLight:
 	case ePass_DirectionalLightRSM:
 		return CRendererResources::s_hwTexFormatSupport.GetClosestFormatSupported(
-			CRendererCVars::CV_r_shadowtexformat == 0 ? eTF_D32F  :
-		    (CRendererCVars::CV_r_shadowtexformat == 1 ? eTF_D16  : eTF_D24S8));
+		     shadowConfig.nTexFormat == 0 ? eTF_D32F  :
+		    (shadowConfig.nTexFormat == 1 ? eTF_D16  : eTF_D24S8));
 
 	case ePass_DirectionalLightCached:
 		return CRendererResources::s_hwTexFormatSupport.GetClosestFormatSupported(
-			CRendererCVars::CV_r_ShadowsCacheFormat == 0 ? eTF_D32F : eTF_D16);
+			shadowConfig.nCacheFormat == 0 ? eTF_D32F : eTF_D16);
 
 	case ePass_LocalLightRSM:
 	case ePass_LocalLight:
 		return CRendererResources::s_hwTexFormatSupport.GetClosestFormatSupported(
-			CRendererCVars::CV_r_shadowtexformat == 0 ? eTF_D32F : eTF_D16);
+			shadowConfig.nTexFormat == 0 ? eTF_D32F : eTF_D16);
 	}
 
 	return eTF_Unknown;
@@ -55,9 +56,9 @@ void CShadowMapStage::Init()
 		const EShaderStage shaderStages = EShaderStage_Vertex | EShaderStage_Hull | EShaderStage_Domain | EShaderStage_Pixel;
 
 		m_perPassResources.SetTexture(EPerPassTexture_PerlinNoiseMap, CRendererResources::s_pTexNULL, EDefaultResourceViews::Default, EShaderStage_Vertex);
-		m_perPassResources.SetTexture(EPerPassTexture_WindGrid, CRendererResources::s_pTexNULL, EDefaultResourceViews::Default, EShaderStage_Vertex);
+		m_perPassResources.SetTexture(EPerPassTexture_WindGrid      , CRendererResources::s_pTexNULL, EDefaultResourceViews::Default, EShaderStage_Vertex);
 		m_perPassResources.SetTexture(EPerPassTexture_TerrainElevMap, CRendererResources::s_pTexNULL, EDefaultResourceViews::Default, EShaderStage_Vertex);
-		m_perPassResources.SetTexture(EPerPassTexture_TerrainBaseMap, CRendererResources::s_pTexNULL, EDefaultResourceViews::sRGB, EShaderStage_Pixel);
+		m_perPassResources.SetTexture(EPerPassTexture_TerrainBaseMap, CRendererResources::s_pTexNULL, EDefaultResourceViews::sRGB   , EShaderStage_Pixel);
 
 		m_perPassResources.SetConstantBuffer(eConstantBufferShaderSlot_PerPass, CDeviceBufferManager::GetNullConstantBuffer(), shaderStages);
 		m_perPassResources.SetConstantBuffer(eConstantBufferShaderSlot_PerView, CDeviceBufferManager::GetNullConstantBuffer(), shaderStages);
@@ -77,15 +78,46 @@ void CShadowMapStage::Init()
 	// Freeze resource-set layout (assert will fire when violating the constraint)
 	m_perPassResources.AcceptChangedBindPoints();
 
-	ReAllocateResources();
+	{
+		int nShadowTexFormat = CRendererCVars::CV_r_shadowtexformat;
+
+		int nShadowPoolSize = 2048;
+		if (ICVar* pShadowsPoolSizeCVar = iConsole->GetCVar("e_ShadowsPoolSize"))
+			nShadowPoolSize = pShadowsPoolSizeCVar->GetIVal();
+
+		int nShadowCacheFormat = CRendererCVars::CV_r_ShadowsCacheFormat;
+		int nShadowCacheLODs = CRendererCVars::CV_r_ShadowsCache;
+
+		int nShadowCacheCascades = 0;
+		if (ICVar* pGsmLodsVar = gEnv->pConsole->GetCVar("e_GsmLodsNum"))
+			nShadowCacheCascades = pGsmLodsVar->GetIVal();
+		else
+			nShadowCacheCascades = gEnv->pSystem->GetConfigSpec() == CONFIG_LOW_SPEC ? 4 : 5;
+
+		StaticArray<int, MAX_GSM_LODS_NUM> nResolutions = gRenDev->GetCachedShadowsResolution();
+
+		ReAllocateResources({ nShadowTexFormat, nShadowPoolSize, nShadowCacheFormat, nShadowCacheLODs, nShadowCacheCascades, nResolutions });
+	}
+	
+	// Providing the right texture is not necessary at all since shadow map rendering is using texture from depth target pool.
+	// It is only necessary to provide a texture with right format.
+	_smart_ptr<CTexture> pDummyRsmDepth = CRendererResources::s_ptexRT_ShadowPool;
+	_smart_ptr<CTexture> pDummyRsmPoolDepth = CRendererResources::s_ptexRT_ShadowPool;
 
 #if defined(FEATURE_SVO_GI)
 	CSvoRenderer::GetRsmTextures(m_pRsmColorTex, m_pRsmNormalTex, m_pRsmPoolColorTex, m_pRsmPoolNormalTex);
-	m_pRsmPoolDepth = CRendererResources::s_ptexRT_ShadowPool;
+
 
 	if (!CTexture::IsTextureExist(m_pRsmColorTex))
 	{
-		m_pRsmPoolDepth = CTexture::GetOrCreateTextureObject("SVO_PRJ_DEPTH_DUMMY", 0, 0, 1,
+		pDummyRsmDepth = CTexture::GetOrCreateTextureObject("SVO_PRJ_DEPTH_DIRECTIONAL_LIGHT_DUMMY", 0, 0, 1,
+			CRendererResources::s_ptexRT_ShadowPool->GetTextureType(),
+			CRendererResources::s_ptexRT_ShadowPool->GetFlags(),
+			CRendererResources::s_ptexRT_ShadowPool->GetDstFormat());
+	}
+	if (!CTexture::IsTextureExist(m_pRsmPoolColorTex))
+	{
+		pDummyRsmPoolDepth = CTexture::GetOrCreateTextureObject("SVO_PRJ_DEPTH_LOCAL_LIGHT_DUMMY", 0, 0, 1,
 			CRendererResources::s_ptexRT_ShadowPool->GetTextureType(),
 			CRendererResources::s_ptexRT_ShadowPool->GetFlags(),
 			CRendererResources::s_ptexRT_ShadowPool->GetDstFormat());
@@ -94,60 +126,149 @@ void CShadowMapStage::Init()
 
 	// preallocate typically used passes (NOTE: at least one pass is needed for PSO compilation)
 	// *INDENT-OFF*
-	m_ShadowMapPasses[ePass_DirectionalLight      ].Init(this, 8,  SDynTexture_Shadow::s_RootShadow.m_NextShadow->m_pTexture, nullptr,            nullptr);
-	m_ShadowMapPasses[ePass_DirectionalLightCached].Init(this, 8,  CRendererResources::s_ptexCachedShadowMap[0],              nullptr,            nullptr);
-	m_ShadowMapPasses[ePass_LocalLight            ].Init(this, 16, CRendererResources::s_ptexRT_ShadowPool,                   nullptr,            nullptr);
-	m_ShadowMapPasses[ePass_DirectionalLightRSM   ].Init(this, 1,  SDynTexture_Shadow::s_RootShadow.m_NextShadow->m_pTexture, m_pRsmColorTex,     m_pRsmNormalTex);
-	m_ShadowMapPasses[ePass_LocalLightRSM         ].Init(this, 1,  m_pRsmPoolDepth,                                           m_pRsmPoolColorTex, m_pRsmPoolNormalTex);
+	m_ShadowMapPasses[ePass_DirectionalLight      ].Init(this, 8,  CRendererResources::s_ptexRT_ShadowPool, nullptr,            nullptr);
+	m_ShadowMapPasses[ePass_DirectionalLightCached].Init(this, 8,  CRendererResources::s_ptexRT_ShadowPool, nullptr,            nullptr);
+	m_ShadowMapPasses[ePass_LocalLight            ].Init(this, 16, CRendererResources::s_ptexRT_ShadowPool, nullptr,            nullptr);
+	m_ShadowMapPasses[ePass_DirectionalLightRSM   ].Init(this, 1,  pDummyRsmDepth,                          m_pRsmColorTex,     m_pRsmNormalTex);
+	m_ShadowMapPasses[ePass_LocalLightRSM         ].Init(this, 1,  pDummyRsmPoolDepth,                      m_pRsmPoolColorTex, m_pRsmPoolNormalTex);
 	// *INDENT-ON*
 }
 
-void CShadowMapStage::ReAllocateResources()
+void CShadowMapStage::ReAllocateResources(const SShadowConfig shadowConfig)
 {
-	// NOTE: Can't be called in Init() without check, because 3DEngine CVars have not been added yet (Renderer loads before 3DEngine)
-	ICVar* pShadowsPoolSizeCVar = iConsole->GetCVar("e_ShadowsPoolSize");
+	ETEX_Format eShadowTexFormat = shadowConfig.nTexFormat == 1 ? eTF_D16 : eTF_D32F;
 
+	// =======================================
 	// resize shadow pool if required
-	const int shadowPoolSize = pShadowsPoolSizeCVar ? pShadowsPoolSizeCVar->GetIVal() : 2048;
-	ETEX_Format eShadowPoolFormat = CRendererCVars::CV_r_shadowtexformat == 1 ? eTF_D16 : eTF_D32F;
-	CRendererResources::s_ptexRT_ShadowPool->Invalidate(shadowPoolSize, shadowPoolSize, eShadowPoolFormat);
-	CRendererResources::s_ptexFarPlane->Invalidate(8, 8, eShadowPoolFormat); // 1x HTILE/DepthTile
-
-	if (!CTexture::IsTextureExist(CRendererResources::s_ptexRT_ShadowPool))
 	{
+		const int shadowPoolSize = shadowConfig.nPoolSize;
+
+		CRendererResources::s_ptexRT_ShadowPool->Invalidate(shadowPoolSize, shadowPoolSize, eShadowTexFormat);
+		if (!CTexture::IsTextureExist(CRendererResources::s_ptexRT_ShadowPool))
+		{
 #if !defined(_RELEASE) && !CRY_PLATFORM_WINDOWS
-		static int reallocationCount = 0;
-		assert(reallocationCount == 0); // don't want any realloc on consoles
-		++reallocationCount;
+			static int reallocationCount = 0;
+			assert(reallocationCount == 0); // don't want any realloc on consoles
+			++reallocationCount;
 #endif
 
-		CRendererResources::s_ptexRT_ShadowPool->CreateDepthStencil(eTF_Unknown, ColorF(Clr_FarPlane.r, 5.f, 0.f, 0.f));
+			CRendererResources::s_ptexRT_ShadowPool->CreateDepthStencil(eShadowTexFormat, ColorF(Clr_FarPlane.r, 5.f, 0.f, 0.f));
+		}
 	}
 
-	// allocate shadow maps for dynamic frustums
+	// =======================================
 	{
-		ETEX_Format texFormat  = GetShadowTexFormat(ePass_DirectionalLight);
+		const auto& nResolutions = shadowConfig.nCacheResolutions;
+		const ETEX_Format texFormat = shadowConfig.nCacheFormat == 0 ? eTF_D32F : eTF_D16;
+		const int cachedShadowsStart = clamp_tpl(shadowConfig.nCacheLODs, 0, MAX_GSM_LODS_NUM - 1);
+		const int cachedCascadesCount = cachedShadowsStart > 0 ? clamp_tpl(shadowConfig.nCacheCascades - cachedShadowsStart + 1, 0, MAX_GSM_LODS_NUM) : 0;
 
-		if (SDynTexture_Shadow::s_RootShadow.m_NextShadow == &SDynTexture_Shadow::s_RootShadow)
+		for (int i = 0; i < MAX_GSM_LODS_NUM; ++i)
 		{
-			for (int i = 0; i < MAX_GSM_LODS_NUM; ++i)
+			_smart_ptr<CTexture>& pTx = m_ShadowMapCache[i];
+
+			if (!pTx)
 			{
-				SDynTexture_Shadow* pNewShadow = new SDynTexture_Shadow(0, 0, Clr_FarPlane, texFormat, eTT_2D, FT_USAGE_DEPTHSTENCIL | FT_STATE_CLAMP, "ShadowRT");
+				char szName[64];
+				cry_sprintf(szName, "$ShadowMapCached_%d", i);
 
-				char name[64];
-				cry_sprintf(name, "$Dyn_%s_2D_%s_%d", "ShadowRT", CTexture::NameForTextureFormat(texFormat), pNewShadow->m_nUniqueID);
+				pTx = CTexture::GetOrCreateDepthStencil(szName, nResolutions[i], nResolutions[i], Clr_FarPlane, eTT_2D, FT_DONT_STREAM, texFormat);
+			}
 
-				pNewShadow->m_pTexture = CTexture::GetOrCreateTextureObject(name, 0, 0, 0, eTT_2D, FT_USAGE_DEPTHSTENCIL | FT_STATE_CLAMP, texFormat);
-				pNewShadow->m_pFrustumOwner = nullptr;
+			pTx->Invalidate(nResolutions[i], nResolutions[i], texFormat);
+
+			// delete existing texture in case it's not needed anymore
+			if (CTexture::IsTextureExist(pTx) && nResolutions[i] == 0)
+				pTx->ReleaseDeviceTexture(false);
+
+			// allocate texture directly for all cached cascades
+			if (!CTexture::IsTextureExist(pTx) && nResolutions[i] > 0 && i < cachedCascadesCount)
+			{
+				CryLog("Allocating shadow map cache %d x %d: %.2f MB", nResolutions[i], nResolutions[i], sqr(nResolutions[i]) * CTexture::BitsPerPixel(texFormat) / (1024.f * 1024.f * 8.f));
+				pTx->CreateDepthStencil(texFormat, Clr_FarPlane);
 			}
 		}
 	}
 
-	if (!CTexture::IsTextureExist(CRendererResources::s_ptexFarPlane))
+	// =======================================
+	// allocate shadow maps for dynamic frustums
+	for (int lightType = ePass_DirectionalLight; lightType <= ePass_DirectionalLightCached; ++lightType)
 	{
-		CRendererResources::s_ptexFarPlane->CreateDepthStencil(eTF_Unknown, Clr_FarPlane);
-		CClearSurfacePass::Execute(CRendererResources::s_ptexFarPlane, CLEAR_ZBUFFER, Clr_FarPlane.r, Val_Unused);
+		for (auto& cachedPass : m_ShadowMapPasses[lightType])
+		{
+			if (cachedPass.m_eFrustumType == EFrustumType::e_GsmDynamic ||
+				cachedPass.m_eFrustumType == EFrustumType::e_GsmDynamicDistance ||
+				cachedPass.m_eFrustumType == EFrustumType::e_PerObject ||
+				cachedPass.m_eFrustumType == EFrustumType::e_Nearest)
+			{
+				ETEX_Format texFormat = GetShadowTexFormat(shadowConfig, EPass(lightType));
+
+				if (cachedPass.m_pDepthTarget)
+				{
+					const int width = cachedPass.m_pDepthTarget->GetWidth();
+					const int height = cachedPass.m_pDepthTarget->GetHeight();
+					cachedPass.m_pDepthTarget->Invalidate(width, height, texFormat);
+
+					if (!CTexture::IsTextureExist(cachedPass.m_pDepthTarget))
+					{
+						cachedPass.m_pDepthTarget->CreateDepthStencil(texFormat, Clr_FarPlane);
+					}
+				}
+			}
+		}
 	}
+
+	// =======================================
+	{
+		CRendererResources::s_ptexFarPlane->Invalidate(8, 8, eShadowTexFormat); // 1x HTILE/DepthTile
+		if (!CTexture::IsTextureExist(CRendererResources::s_ptexFarPlane))
+		{
+			CRendererResources::s_ptexFarPlane->CreateDepthStencil(eShadowTexFormat, Clr_FarPlane);
+			CClearSurfacePass::Execute(CRendererResources::s_ptexFarPlane, CLEAR_ZBUFFER, Clr_FarPlane.r, Val_Unused);
+		}
+	}
+}
+
+void CShadowMapStage::OnEntityDeleted(IRenderNode* pRenderNode)
+{
+	for (int lightType = ePass_DirectionalLight; lightType <= ePass_LocalLightRSM; ++lightType)
+	{
+		for (auto& cachedPass : m_ShadowMapPasses[lightType])
+		{
+			if (cachedPass.m_pLightOwner == pRenderNode)
+			{
+				if (cachedPass.m_eFrustumType == EFrustumType::e_GsmDynamic ||
+					cachedPass.m_eFrustumType == EFrustumType::e_GsmDynamicDistance ||
+					cachedPass.m_eFrustumType == EFrustumType::e_PerObject ||
+					cachedPass.m_eFrustumType == EFrustumType::e_Nearest)
+				{
+					cachedPass.m_pDepthTarget->ReleaseDeviceTexture(false);
+				}
+
+				cachedPass.m_pLightOwner = nullptr;
+			}
+		}
+	}
+}
+
+size_t CShadowMapStage::GetAllocatedMemory()
+{
+	std::map<const void*, size_t> textureSet;
+
+	// Prevent re-use of textures to contribute more than once to allocated size
+	for (int lightType = ePass_DirectionalLight; lightType <= ePass_LocalLightRSM; ++lightType)
+	{
+		for (const auto& cachedPass : m_ShadowMapPasses[lightType])
+		{
+			if (const auto* depthTarget = cachedPass.m_pDepthTarget.get())
+				textureSet[depthTarget] = depthTarget->GetActualSize();
+		}
+	}
+
+	size_t sizeSum = 0;
+	for (auto stat : textureSet)
+		sizeSum += stat.second;
+	return sizeSum;
 }
 
 void CShadowMapStage::OnCVarsChanged(const CCVarUpdateRecorder& cvarUpdater)
@@ -155,6 +276,62 @@ void CShadowMapStage::OnCVarsChanged(const CCVarUpdateRecorder& cvarUpdater)
 	if (cvarUpdater.GetCVar("r_ShadowsLocalLightsLinearizeDepth"))
 	{
 		m_shadowsLocalLightsLinearizeDepth = cvarUpdater.GetCVar("r_ShadowsLocalLightsLinearizeDepth")->intValue;
+	}
+
+	if (cvarUpdater.GetCVar("r_ShadowTexFormat") ||
+		cvarUpdater.GetCVar("e_ShadowsPoolSize") ||
+		cvarUpdater.GetCVar("r_ShadowsCacheFormat") ||
+		cvarUpdater.GetCVar("r_ShadowsCache") ||
+		cvarUpdater.GetCVar("r_ShadowsCacheResolutions") ||
+		cvarUpdater.GetCVar("e_GsmLodsNum"))
+	{
+		int nShadowTexFormat = CRendererCVars::CV_r_shadowtexformat;
+		if (cvarUpdater.GetCVar("r_ShadowTexFormat"))
+			nShadowTexFormat = cvarUpdater.GetCVar("r_ShadowTexFormat")->intValue;
+
+		int nShadowPoolSize = 2048;
+		if (cvarUpdater.GetCVar("e_ShadowsPoolSize"))
+			nShadowPoolSize = cvarUpdater.GetCVar("e_ShadowsPoolSize")->intValue;
+		else if (ICVar* pShadowsPoolSizeCVar = iConsole->GetCVar("e_ShadowsPoolSize"))
+			nShadowPoolSize = pShadowsPoolSizeCVar->GetIVal();
+
+		int nShadowCacheFormat = CRendererCVars::CV_r_ShadowsCacheFormat;
+		if (cvarUpdater.GetCVar("r_ShadowsCacheFormat"))
+			nShadowCacheFormat = cvarUpdater.GetCVar("r_ShadowsCacheFormat")->intValue;
+
+		int nShadowCacheLODs = CRendererCVars::CV_r_ShadowsCache;
+		if (cvarUpdater.GetCVar("r_ShadowsCache"))
+			nShadowCacheLODs = cvarUpdater.GetCVar("r_ShadowsCache")->intValue;
+
+		int nShadowCacheCascades = 0;
+		if (cvarUpdater.GetCVar("e_GsmLodsNum"))
+			nShadowCacheCascades = cvarUpdater.GetCVar("e_GsmLodsNum")->intValue;
+		else if (ICVar* pGsmLodsVar = gEnv->pConsole->GetCVar("e_GsmLodsNum"))
+			nShadowCacheCascades = pGsmLodsVar->GetIVal();
+		else
+			nShadowCacheCascades = gEnv->pSystem->GetConfigSpec() == CONFIG_LOW_SPEC ? 4 : 5;
+
+		StaticArray<int, MAX_GSM_LODS_NUM> nResolutions = gRenDev->GetCachedShadowsResolution();
+
+		ReAllocateResources({ nShadowTexFormat, nShadowPoolSize, nShadowCacheFormat, nShadowCacheLODs, nShadowCacheCascades, nResolutions });
+	}
+}
+
+void CShadowMapStage::SetRenderView(CRenderView* pRenderView)
+{
+	m_pRenderView = pRenderView;
+
+	if (!pRenderView)
+	{
+		// Cleanup dangling pointers
+
+		for (CShadowMapPassGroup& passGroup : m_ShadowMapPasses)
+		{
+			for (size_t i = 0, count = passGroup.GetCount(); i < count; ++i)
+			{
+				passGroup[i].m_pFrustumToRender = nullptr;
+			}
+		}
 	}
 }
 
@@ -338,38 +515,35 @@ bool CShadowMapStage::CanRenderCachedShadows(const CCompiledRenderObject *obj) c
 
 void CShadowMapStage::Update()
 {
+	PROFILE_LABEL_SCOPE("SHADOWMAP_PREPARE");
+
 	CRenderView* pRenderView = RenderView();
 
-	if (pRenderView->IsRecursive() || pRenderView->GetCurrentEye() != CCamera::eEye_Left)
-		return; // TODO: how will we handle recursion?
+	// compile shadow render items
+	pRenderView->PrepareShadowViews();
 
+	// prepare the shadow pool
+	CDeferredShading::Instance().SetupPasses(pRenderView);
+
+	// now prepare passes for each frustum
+	for (auto& passGroup : m_ShadowMapPasses)
+		passGroup.Reset();
+
+	for (auto frustumType  = CRenderView::eShadowFrustumRenderType_First;
+			    frustumType != CRenderView::eShadowFrustumRenderType_Count;
+			    frustumType  = CRenderView::eShadowFrustumRenderType(frustumType + 1))
 	{
-		PROFILE_LABEL_SCOPE("SHADOWMAP_PREPARE");
-
-		// prepare the shadow pool
-		ReAllocateResources();
-		CDeferredShading::Instance().SetupPasses(pRenderView);
-
-		// now prepare passes for each frustum
-		for (auto& passGroup : m_ShadowMapPasses)
-			passGroup.Reset();
-
-		for (auto frustumType  = CRenderView::eShadowFrustumRenderType_First;
-			      frustumType != CRenderView::eShadowFrustumRenderType_Count;
-			      frustumType  = CRenderView::eShadowFrustumRenderType(frustumType + 1))
+		for (auto& pFrustumToRender : pRenderView->GetShadowFrustumsByType(frustumType))
 		{
-			for (auto& pFrustumToRender : pRenderView->GetShadowFrustumsByType(frustumType))
-			{
-				CRY_ASSERT(pRenderView->GetFrameId() == pFrustumToRender->pShadowsView->GetFrameId());
-				PrepareShadowPasses(*pFrustumToRender, frustumType);
-			}
+			CRY_ASSERT(pRenderView->GetFrameId() == pFrustumToRender->pShadowsView->GetFrameId());
+			PrepareShadowPasses(*pFrustumToRender, frustumType);
 		}
+	}
 
-		// clear the shadow maps we will use
-		if (CRendererCVars::CV_r_ShadowMapsUpdate)
-		{
-			ClearShadowMaps(m_ShadowMapPasses);
-		}
+	// clear the shadow maps we will use
+	if (CRendererCVars::CV_r_ShadowMapsUpdate)
+	{
+		ClearShadowMaps(m_ShadowMapPasses);
 	}
 }
 
@@ -392,10 +566,13 @@ void CShadowMapStage::PrepareShadowPasses(SShadowFrustumToRender& frustumToRende
 		if (pFrustum->ShouldSampleSide(side))
 		{
 			CShadowMapPass& curPass = m_ShadowMapPasses[passID].AddPass();
+			cry_strcpy(curPass.m_ProfileLabel, profileLabel);
 
 			if (PrepareOutputsForPass(frustumToRender, side, curPass))
 			{
 				curPass.m_pFrustumToRender = &frustumToRender;
+				curPass.m_eFrustumType = frustumToRender.pFrustum->m_eFrustumType;
+				curPass.m_pLightOwner = frustumToRender.pFrustum->pLightOwner;
 				curPass.m_nShadowFrustumSide = side;
 				curPass.m_eShadowPassID = passID;
 
@@ -406,8 +583,6 @@ void CShadowMapStage::PrepareShadowPasses(SShadowFrustumToRender& frustumToRende
 				  (CRendererCVars::CV_r_ShadowMapsUpdate && !pShadowView->GetRenderItems(ERenderListID(side)).empty()) ||
 				   pFrustum->m_eFrustumType == ShadowMapFrustum::e_GsmDynamicDistance ||
 				  (pFrustum->m_eFrustumType == ShadowMapFrustum::e_GsmCached && !pFrustum->bIncrementalUpdate);
-
-				cry_strcpy(curPass.m_ProfileLabel, profileLabel);
 
 				curPass.SetLabel(curPass.m_ProfileLabel);
 				curPass.SetPassResources(m_pResourceLayout, curPass.GetResources());
@@ -494,7 +669,7 @@ bool CShadowMapStage::PrepareOutputsForPass(const SShadowFrustumToRender& frustu
 	const ShadowMapFrustum& frustum = *frustumToRender.pFrustum;
 
 	int arrViewport[4];
-	CTexture* pDepthTarget = nullptr;
+	_smart_ptr<CTexture> pDepthTarget;
 	std::array<CTexture*, 2> colorTargets;
 	colorTargets.fill(nullptr);
 	const CShadowMapPass* pClearDepthMapProvider = nullptr;
@@ -506,26 +681,22 @@ bool CShadowMapStage::PrepareOutputsForPass(const SShadowFrustumToRender& frustu
 
 		pDepthTarget = CRendererResources::s_ptexRT_ShadowPool;
 		clearMode = CShadowMapPass::eClearMode_FillRect;
-
 		frustum.GetSideViewport(nSide, arrViewport);
 	}
 	else
 	{
+		char pName[256];
+		cry_sprintf(pName, "$%s", targetPass.m_ProfileLabel);
+
 		if (frustum.m_eFrustumType == ShadowMapFrustum::e_GsmDynamic ||
-		    frustum.m_eFrustumType == ShadowMapFrustum::e_PerObject)
+		    frustum.m_eFrustumType == ShadowMapFrustum::e_PerObject ||
+		    frustum.m_eFrustumType == ShadowMapFrustum::e_Nearest)
 		{
-			SDynTexture_Shadow* pDynTX = SDynTexture_Shadow::GetForFrustum(&frustum);
-			pDepthTarget = pDynTX->m_pTexture;
-		}
-		else if (frustum.m_eFrustumType == ShadowMapFrustum::e_Nearest)
-		{
-			pDepthTarget = CRendererResources::s_ptexNearestShadowMap;
-			if (!CTexture::IsTextureExist(pDepthTarget))
-				pDepthTarget->CreateDepthStencil(frustum.m_eReqTF, Clr_FarPlane);
+			pDepthTarget = CTexture::GetOrCreateDepthStencilPtr(pName, frustum.nTextureWidth, frustum.nTextureHeight, frustum.clearValue, frustum.m_eReqTT, FT_USAGE_TEMPORARY | FT_NOMIPS | FT_STATE_CLAMP, frustum.m_eReqTF);
 		}
 		else
 		{
-			PrepareOutputsForFrustumWithCaching(frustum, pDepthTarget, pClearDepthMapProvider, clearMode);
+			pDepthTarget = PrepareOutputsForFrustumWithCaching(pName, frustum, pClearDepthMapProvider, clearMode);
 		}
 
 		arrViewport[0] = arrViewport[1] = 0;
@@ -538,16 +709,14 @@ bool CShadowMapStage::PrepareOutputsForPass(const SShadowFrustumToRender& frustu
 	colorTargets[1] = CSvoRenderer::GetInstance()->GetRsmNormlMap(frustum);
 #endif
 
+	targetPass.m_pDepthTarget = pDepthTarget;
 	if (!pDepthTarget || !pDepthTarget->GetDevTexture())
 		return false;
 
 	// now apply to pass
 	targetPass.m_pClearDepthMapProvider = pClearDepthMapProvider;
 	targetPass.m_clearMode = clearMode;
-
-	targetPass.ExchangeRenderTarget(0, colorTargets[0]);
-	targetPass.ExchangeRenderTarget(1, colorTargets[1]);
-	targetPass.ExchangeDepthTarget(pDepthTarget);
+	targetPass.SetRenderTargets(pDepthTarget, colorTargets[0], colorTargets[1]);
 
 	D3DViewPort viewport = { float(arrViewport[0]), float(arrViewport[1]), float(arrViewport[2]), float(arrViewport[3]), 0, 1 };
 	targetPass.SetViewport(viewport);
@@ -587,11 +756,11 @@ void CShadowMapStage::UpdateShadowFrustumFromPass(const CShadowMapPass& sourcePa
 	}
 }
 
-void CShadowMapStage::PrepareOutputsForFrustumWithCaching(const ShadowMapFrustum& frustum, CTexture*& pDepthTarget, const CShadowMapPass*& pClearDepthMapProvider, CShadowMapPass::eClearMode& clearMode) const
+_smart_ptr<CTexture> CShadowMapStage::PrepareOutputsForFrustumWithCaching(const char* pName, const ShadowMapFrustum& frustum, const CShadowMapPass*& pClearDepthMapProvider, CShadowMapPass::eClearMode& clearMode) const
 {
 	CRY_ASSERT(frustum.IsCached() || frustum.m_eFrustumType == ShadowMapFrustum::eFrustumType::e_GsmDynamicDistance);
 
-	pDepthTarget = nullptr;
+	_smart_ptr<CTexture> pDepthTarget;
 	pClearDepthMapProvider = nullptr;
 	clearMode = CShadowMapPass::eClearMode_Fill;
 
@@ -600,13 +769,16 @@ void CShadowMapStage::PrepareOutputsForFrustumWithCaching(const ShadowMapFrustum
 		if (frustum.m_eFrustumType == ShadowMapFrustum::eFrustumType::e_GsmCached)
 		{
 			int nCachedMapIndex = frustum.nShadowCacheLod;
-			CRY_ASSERT(nCachedMapIndex >= 0 && nCachedMapIndex < CRY_ARRAY_COUNT(CRendererResources::s_ptexCachedShadowMap));
+			CRY_ASSERT(nCachedMapIndex >= 0 && nCachedMapIndex < CRY_ARRAY_COUNT(m_ShadowMapCache));
 
-			pDepthTarget = CRendererResources::s_ptexCachedShadowMap[clamp_tpl(nCachedMapIndex, 0, int(CRY_ARRAY_COUNT(CRendererResources::s_ptexCachedShadowMap) - 1))];
+			pDepthTarget = m_ShadowMapCache[clamp_tpl(nCachedMapIndex, 0, int(CRY_ARRAY_COUNT(m_ShadowMapCache) - 1))];
 		}
-		else // e_HeightMapAO
+		else if (frustum.m_eFrustumType == ShadowMapFrustum::eFrustumType::e_HeightMapAO)
 		{
-			pDepthTarget = CRendererResources::s_ptexHeightMapAODepth[0];
+			auto* heightMapAO = GetStdGraphicsPipeline().GetHeightMapAOStage();
+			CRY_ASSERT(heightMapAO->IsStageActive(EShaderRenderingFlags(0)));
+
+			pDepthTarget = heightMapAO->GetHeightMapAODepthTex(0);
 		}
 
 		clearMode = frustum.bIncrementalUpdate ? CShadowMapPass::eClearMode_None : CShadowMapPass::eClearMode_Fill;
@@ -622,12 +794,13 @@ void CShadowMapStage::PrepareOutputsForFrustumWithCaching(const ShadowMapFrustum
 				pClearDepthMapProvider = &cachedPass;
 				clearMode = CShadowMapPass::eClearMode_CopyDepthMap;
 
-				SDynTexture_Shadow* pDynTX = SDynTexture_Shadow::GetForFrustum(&frustum);
-				pDepthTarget = pDynTX->m_pTexture;
+				pDepthTarget = CTexture::GetOrCreateDepthStencilPtr(pName, frustum.nTextureWidth, frustum.nTextureHeight, frustum.clearValue, frustum.m_eReqTT, FT_USAGE_TEMPORARY | FT_NOMIPS | FT_STATE_CLAMP, frustum.m_eReqTF);
 				break;
 			}
 		}
 	}
+
+	return pDepthTarget;
 }
 
 void CShadowMapStage::PrepareShadowPassForFrustum(const SShadowFrustumToRender& frustumToRender, int nSide, CShadowMapPass& targetPass) const
@@ -710,15 +883,17 @@ CShadowMapStage::CShadowMapPass& CShadowMapStage::CShadowMapPassGroup::AddPass()
 }
 
 CShadowMapStage::CShadowMapPass::CShadowMapPass(CShadowMapStage* pStage)
-	: m_perPassResources(pStage->m_perPassResources) // clone per pass resources from stage
+	: m_pDepthTarget(nullptr)
+	, m_pFrustumToRender(nullptr)
+	, m_eFrustumType(EFrustumType(0))
+	, m_pLightOwner(nullptr)
+	, m_nShadowFrustumSide(0)
+	, m_eShadowPassID(EPass(0))
+	, m_perPassResources(pStage->m_perPassResources) // clone per pass resources from stage
 	, m_ViewProjMatrix(IDENTITY)
 	, m_ViewProjMatrixOrig(IDENTITY)
+	, m_pShadowMapStage(pStage)
 {
-	m_pFrustumToRender = nullptr;
-	m_nShadowFrustumSide = 0;
-	m_eShadowPassID = EPass(0);
-	m_pShadowMapStage = pStage;
-
 	m_pPerPassResourceSet = GetDeviceObjectFactory().CreateResourceSet(CDeviceResourceSet::EFlags_ForceSetAllState);
 	m_pPerPassConstantBuffer = gcpRendD3D->m_DevBufMan.CreateConstantBuffer(sizeof(HLSL_PerPassConstantBuffer_ShadowGen));
 	m_pPerViewConstantBuffer = gcpRendD3D->m_DevBufMan.CreateConstantBuffer(sizeof(HLSL_PerViewGlobalConstantBuffer));
@@ -727,6 +902,8 @@ CShadowMapStage::CShadowMapPass::CShadowMapPass(CShadowMapStage* pStage)
 CShadowMapStage::CShadowMapPass::CShadowMapPass(CShadowMapPass&& other)
 	: CSceneRenderPass(std::move(other))
 	, m_pFrustumToRender(std::move(other.m_pFrustumToRender))
+	, m_eFrustumType(std::move(other.m_eFrustumType))
+	, m_pLightOwner(std::move(other.m_pLightOwner))
 	, m_nShadowFrustumSide(std::move(other.m_nShadowFrustumSide))
 	, m_eShadowPassID(std::move(other.m_eShadowPassID))
 	, m_bRequiresRender(std::move(other.m_bRequiresRender))
@@ -745,8 +922,6 @@ CShadowMapStage::CShadowMapPass::CShadowMapPass(CShadowMapPass&& other)
 
 bool CShadowMapStage::CShadowMapPass::PrepareResources(const CRenderView* pMainView)
 {
-	CD3D9Renderer* pRenderer = gcpRendD3D;
-
 	assert(m_pFrustumToRender);
 	assert(m_pPerPassResourceSet);
 	assert(m_pPerViewConstantBuffer);
@@ -991,8 +1166,6 @@ void CShadowMapStage::Execute()
 	FUNCTION_PROFILER_RENDERER();
 	PROFILE_LABEL_SCOPE("SHADOWMAPS");
 
-	CD3D9Renderer* rd = gcpRendD3D;
-	const int nThreadID = gRenDev->GetRenderThreadID();
 	CRenderItemDrawer& rendItemDrawer = RenderView()->GetDrawer();
 
 	// Cached shadow maps cannot run concurrent due to CopyShadowMap pass

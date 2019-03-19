@@ -289,55 +289,6 @@ struct SAudioTriggerKey : public STrackDurationKey
 	CryAudio::ControlId m_stopTriggerId;
 };
 
-/** SAudioFileKey used in audio file track.
- */
-struct SAudioFileKey : public STrackDurationKey
-{
-	SAudioFileKey()
-		: STrackDurationKey()
-		, m_bIsLocalized(false)
-		, m_bNoTriggerInScrubbing(false)
-	{}
-
-	static const char* GetType()              { return "AudioFile"; }
-	const char*        GetDescription() const { return m_audioFile; }
-
-	void               Serialize(Serialization::IArchive& ar)
-	{
-		STrackKey::Serialize(ar);
-
-		ar(Serialization::SoundFilename(m_audioFile), "file", "Audio File");
-		ar(m_bIsLocalized, "isLocalized", "Localized");
-		ar(m_bNoTriggerInScrubbing, "noTriggerInScrubbing", "No Trigger in Scrubbing");
-
-		if (!PathUtil::GetFileName(m_audioFile).empty())
-		{
-			int pathLength = m_audioFile.find(PathUtil::GetGameFolder());
-			const string tempFilePath = (pathLength == -1) ? PathUtil::GetGameFolder() + CRY_NATIVE_PATH_SEPSTR + m_audioFile : m_audioFile;
-
-			CryAudio::SFileData audioData;
-			gEnv->pAudioSystem->GetFileData(tempFilePath.c_str(), audioData);
-			m_duration = audioData.duration;
-		}
-		else
-		{
-			if (m_bIsLocalized)
-			{
-				const char* szLanguage = gEnv->pSystem->GetLocalizationManager()->GetLanguage();
-				m_audioFile = PathUtil::GetGameFolder() + CRY_NATIVE_PATH_SEPSTR + PathUtil::GetLocalizationFolder() + CRY_NATIVE_PATH_SEPSTR + szLanguage + CRY_NATIVE_PATH_SEPSTR;
-			}
-			else
-			{
-				m_audioFile = PathUtil::GetGameFolder() + CRY_NATIVE_PATH_SEPSTR;
-			}
-		}
-	}
-
-	string m_audioFile;
-	bool   m_bIsLocalized;
-	bool   m_bNoTriggerInScrubbing;
-};
-
 /** SAudioSwitchKey used in CAudioSwitchTrack
  */
 struct SAudioSwitchKey : public STrackKey
@@ -356,7 +307,7 @@ struct SAudioSwitchKey : public STrackKey
 		STrackKey::Serialize(ar);
 
 		ar(Serialization::AudioSwitch(m_audioSwitchName), "switchName", "Switch Name");
-		ar(Serialization::AudioSwitchState(m_audioSwitchStateName), "switchState", "Switch State");
+		ar(Serialization::AudioState(m_audioSwitchStateName), "switchState", "Switch State");
 
 		if (ar.isInput())
 		{
@@ -715,7 +666,7 @@ struct SCaptureFormatInfo
 			"png"
 		};
 		return captureFormatNames[captureFormat];
-	};
+	}
 
 	static ECaptureFileFormat GetCaptureFormatByExtension(const char* szFormatName)
 	{
@@ -729,7 +680,7 @@ struct SCaptureFormatInfo
 		}
 		CryLog("Can't find specified capture format: %s - reverting to %s", szFormatName, GetCaptureFormatExtension(eCaptureFormat_TGA));
 		return eCaptureFormat_TGA;
-	};
+	}
 
 	enum ECaptureBuffer
 	{
@@ -744,7 +695,7 @@ struct SCaptureFormatInfo
 			"Color"
 		};
 		return captureBufferNames[captureBuffer];
-	};
+	}
 
 	static ECaptureBuffer GetCaptureBufferByName(const char* szBufferName)
 	{
@@ -758,7 +709,7 @@ struct SCaptureFormatInfo
 		}
 		CryLog("Can't find specified capture buffer type: %s - reverting to %s", szBufferName, GetCaptureBufferName(eCaptureBuffer_Color));
 		return eCaptureBuffer_Color;
-	};
+	}
 };
 
 struct SCaptureKey : public STrackDurationKey
@@ -857,8 +808,6 @@ struct SBoolKey : public STrackKey
 	{
 		STrackKey::Serialize(ar);
 	}
-
-	SBoolKey() {};
 };
 
 struct SCommentKey : public STrackDurationKey

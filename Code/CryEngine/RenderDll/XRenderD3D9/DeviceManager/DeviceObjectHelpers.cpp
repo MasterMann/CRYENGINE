@@ -155,6 +155,7 @@ SDeviceObjectHelpers::CShaderConstantManager::CShaderConstantManager(CShaderCons
 void SDeviceObjectHelpers::CShaderConstantManager::Reset()
 {
 	m_constantBuffers.clear();
+	m_pShaderReflection.reset();
 }
 
 bool SDeviceObjectHelpers::CShaderConstantManager::AllocateShaderReflection(::CShader* pShader, const CCryNameTSCRC& technique, uint64 rtFlags, EShaderStage shaderStages)
@@ -166,9 +167,9 @@ bool SDeviceObjectHelpers::CShaderConstantManager::AllocateShaderReflection(::CS
 	{
 		if (!pShaderTechnique->m_Passes.empty())
 		{
-			SShaderPass& shaderPass = pShaderTechnique->m_Passes[0];
-
 			// Shader pointers are consecutive
+#if defined(USE_CRY_ASSERT)
+			SShaderPass& shaderPass = pShaderTechnique->m_Passes[0];
 			CHWShader** pHWShaders = &shaderPass.m_VShader;
 			
 			// Compile time evaluable, should produce no code
@@ -178,6 +179,7 @@ bool SDeviceObjectHelpers::CShaderConstantManager::AllocateShaderReflection(::CS
 			CRY_ASSERT(eHWSC_Domain   == (&shaderPass.m_DShader - &shaderPass.m_VShader));
 			CRY_ASSERT(eHWSC_Hull     == (&shaderPass.m_HShader - &shaderPass.m_VShader));
 			CRY_ASSERT(eHWSC_Compute  == (&shaderPass.m_CShader - &shaderPass.m_VShader));
+#endif
 
 			// Shader stages are ordered by usage-frequency and loop exists according to usage-frequency (VS+PS fast, etc.)
 			int validShaderStages = shaderStages;

@@ -84,8 +84,6 @@ void CDeferredDecalsStage::ResizeDecalBuffers(size_t requiredDecalCount)
 
 void CDeferredDecalsStage::SetupDecalPrimitive(const SDeferredDecal& decal, CRenderPrimitive& primitive, _smart_ptr<IRenderShaderResources>& pShaderResources)
 {
-	CD3D9Renderer* const __restrict rd = gcpRendD3D;
-
 	IMaterial* pDecalMaterial = decal.pMaterial;
 	if (!pDecalMaterial)
 		return;
@@ -149,7 +147,6 @@ void CDeferredDecalsStage::SetupDecalPrimitive(const SDeferredDecal& decal, CRen
 			if (pDiffuseRes->IsHasModificators())
 			{
 				pDiffuseRes->UpdateWithModifier(EFTT_MAX, mdFlags);
-				SEfTexModificator* mod = pDiffuseRes->m_Ext.m_pTexModifier;
 				texMatrix = pDiffuseRes->m_Ext.m_pTexModifier->m_TexMatrix;
 			}
 		}
@@ -175,7 +172,7 @@ void CDeferredDecalsStage::SetupDecalPrimitive(const SDeferredDecal& decal, CRen
 		auto constants = constantManager.BeginTypedConstantUpdate<SDecalConstants>(eConstantBufferShaderSlot_PerPrimitive, EShaderStage_Pixel | EShaderStage_Vertex);
 
 		SRenderViewInfo viewInfo[2];
-		size_t viewInfoCount = GetGraphicsPipeline().GenerateViewInfo(viewInfo);
+		GetGraphicsPipeline().GenerateViewInfo(viewInfo);
 
 		const Vec3 vBasisX = decal.projMatrix.GetColumn0();
 		const Vec3 vBasisY = decal.projMatrix.GetColumn1();
@@ -183,7 +180,6 @@ void CDeferredDecalsStage::SetupDecalPrimitive(const SDeferredDecal& decal, CRen
 
 		Vec3  camFront = viewInfo[0].cameraVZ.normalized();
 		Vec3  camPos   = viewInfo[0].cameraOrigin;
-		float camFar   = viewInfo[0].farClipPlane;
 		float camNear  = viewInfo[0].nearClipPlane;
 	
 		const float r = fabs(vBasisX.dot(camFront)) + fabs(vBasisY.dot(camFront)) + fabs(vBasisZ.dot(camFront));
@@ -191,8 +187,8 @@ void CDeferredDecalsStage::SetupDecalPrimitive(const SDeferredDecal& decal, CRen
 		bCameraInVolume = fabs(s) - camNear <= r;  // OBB-Plane via separating axis test, to check if camera near plane intersects decal volume
 
 		assert(decal.rectTexture.w * decal.rectTexture.h > 0.f);
-		constants->textureRect[0] = Vec4(decal.rectTexture.w * texMatrix.m00, decal.rectTexture.h * texMatrix.m10, decal.rectTexture.x * texMatrix.m00 + decal.rectTexture.y * texMatrix.m10 + texMatrix.m30, 0);;
-		constants->textureRect[1] = Vec4(decal.rectTexture.w * texMatrix.m01, decal.rectTexture.h * texMatrix.m11, decal.rectTexture.x * texMatrix.m01 + decal.rectTexture.y * texMatrix.m11 + texMatrix.m31, 0);;
+		constants->textureRect[0] = Vec4(decal.rectTexture.w * texMatrix.m00, decal.rectTexture.h * texMatrix.m10, decal.rectTexture.x * texMatrix.m00 + decal.rectTexture.y * texMatrix.m10 + texMatrix.m30, 0);
+		constants->textureRect[1] = Vec4(decal.rectTexture.w * texMatrix.m01, decal.rectTexture.h * texMatrix.m11, decal.rectTexture.x * texMatrix.m01 + decal.rectTexture.y * texMatrix.m11 + texMatrix.m31, 0);
 
 		constants->diffuseCol = shaderItem.m_pShaderResources->GetColorValue(EFTT_DIFFUSE).toVec4();
 		constants->diffuseCol.w = shaderItem.m_pShaderResources->GetStrengthValue(EFTT_OPACITY) * decal.fAlpha;
@@ -302,16 +298,12 @@ void CDeferredDecalsStage::Execute()
 {
 	FUNCTION_PROFILER_RENDERER();
 
-	CD3D9Renderer* const __restrict rd = gcpRendD3D;
-
 	auto& deferredDecals = RenderView()->GetDeferredDecals();
 
 	ResizeDecalBuffers(deferredDecals.size());
 
-#if !CRY_PLATFORM_ORBIS
 	// Want the buffer cleared or we'll just get black out
 	if (deferredDecals.empty())
-#endif
 		return;
 
 	PROFILE_LABEL_SCOPE("DEFERRED_DECALS");

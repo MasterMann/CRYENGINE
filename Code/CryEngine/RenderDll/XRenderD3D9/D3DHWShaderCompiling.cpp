@@ -123,10 +123,7 @@ bool CHWShader_D3D::mfAddFXTexture(SHWSInstance* pInst, SShaderFXParams& FXParam
 	pParams = &pInst->m_Textures;
 	uint32 nOffs = pParams->size();
 	bool bRes = gRenDev->m_cEF.mfParseFXTexture(FXParams, pr, ParamName, ef, pBind->m_nParameters, pParams, eSHClass);
-	if (!bRes)
-	{
-		int nnn = 0;
-	}
+
 	if (pParams->size() > nOffs)
 	{
 		for (uint32 i = 0; i < pParams->size() - nOffs; i++)
@@ -196,8 +193,7 @@ void CHWShader_D3D::mfAddFXParameter(SHWSInstance* pInst, SParamsGroup& OutParam
 			pParams = &OutParams.Params[0];
 		}
 		uint32 nOffs = pParams->size();
-		bool bRes = gRenDev->m_cEF.mfParseFXParameter(FXParams, pr, ParamName, ef, bInstParam, pBind->m_nParameters, pParams, eSHClass, false);
-		assert(bRes);
+		CRY_VERIFY(gRenDev->m_cEF.mfParseFXParameter(FXParams, pr, ParamName, ef, bInstParam, pBind->m_nParameters, pParams, eSHClass, false));
 		if (pParams->size() > nOffs)
 		{
 			for (uint32 i = 0; i < pParams->size() - nOffs; i++)
@@ -227,7 +223,7 @@ bool CHWShader_D3D::mfAddFXParameter(SHWSInstance* pInst, SParamsGroup& OutParam
 		{
 			if (bn->m_nParameters < 0)
 				bn->m_nParameters = pr->m_nArray;
-			bool bRes = mfAddFXTexture(pInst, FXParams, pr, param, bn, pFXShader, eSHClass);
+			mfAddFXTexture(pInst, FXParams, pr, param, bn, pFXShader, eSHClass);
 			return true;
 		}
 	}
@@ -238,7 +234,7 @@ bool CHWShader_D3D::mfAddFXParameter(SHWSInstance* pInst, SParamsGroup& OutParam
 		{
 			if (bn->m_nParameters < 0)
 				bn->m_nParameters = pr->m_nArray;
-			bool bRes = mfAddFXSampler(pInst, FXParams, pr, param, bn, pFXShader, eSHClass);
+			mfAddFXSampler(pInst, FXParams, pr, param, bn, pFXShader, eSHClass);
 			return true;
 		}
 	}
@@ -301,7 +297,6 @@ void CHWShader_D3D::mfCreateBinds(std::vector<SCGBind> &binds, const void* pCons
 			continue;
 		for (i = 0; i < SBDesc.Variables; i++)
 		{
-			uint32 nCount = 1;
 			D3DShaderReflectionVariable* pCV = pCB->GetVariableByIndex(i);
 			D3DShaderReflectionType* pVT = pCV->GetType();
 			D3D_SHADER_VARIABLE_DESC CDesc;
@@ -360,7 +355,6 @@ void CHWShader_D3D::mfGatherFXParameters(SHWSInstance* pInst, std::vector<SCGBin
 
 	uint32 i, j;
 	SAliasSampler samps[MAX_TMU];
-	int nParam = 0;
 	SParamsGroup Group;
 	SShaderFXParams& FXParams = gRenDev->m_cEF.m_Bin.mfGetFXParams(pInst->m_bFallback ? CShaderMan::s_ShaderFallback : pFXShader);
 	if (pInst->m_pBindVars.size())
@@ -387,7 +381,7 @@ void CHWShader_D3D::mfGatherFXParameters(SHWSInstance* pInst, std::vector<SCGBin
 	{
 		pInst->m_pFXTextures.reserve(FXParams.m_FXTextures.size());
 		for (const auto &t : FXParams.m_FXTextures)
-			pInst->m_pFXTextures.push_back(&t);;
+			pInst->m_pFXTextures.push_back(&t);
 	}
 	else
 	{
@@ -578,7 +572,6 @@ InputLayoutHandle CHWShader_D3D::mfVertexFormat(SHWSInstance* pInst, CHWShader_D
 	bool bHWSkin = false;
 	bool bVelocity = false;
 	bool bMorph = false;
-	bool bBoneSpace = false;
 	bool bPSize = false;
 	bool bSH[2] = { false, false };
 	bool bTC0 = false;
@@ -586,7 +579,6 @@ InputLayoutHandle CHWShader_D3D::mfVertexFormat(SHWSInstance* pInst, CHWShader_D
 	bool bCol = false;
 	bool bSecCol = false;
 	bool bPos = false;
-	InputLayoutHandle eVFormat = EDefaultInputLayouts::P3F_C4B_T2F;
 
 	size_t nSize = pShader->GetBufferSize();
 	void* pData = pShader->GetBufferPointer();
@@ -785,53 +777,6 @@ static bool sGetMask(char* str, SShaderGen* pGen, uint64& nMask)
 	return false;
 }
 
-void CHWShader::mfValidateTokenData(CResFile* pRes)
-{
-#ifdef _DEBUG
-	if (pRes == 0)
-		return;
-
-	bool bTokenValid = true;
-	ResDir* Dir = pRes->mfGetDirectory();
-	for (unsigned int i = 0; i < Dir->size(); i++)
-	{
-		CDirEntry* pDE = &(*Dir)[i];
-		if (pDE->GetFlags() & RF_RES_$TOKENS)
-		{
-			uint32 nSize = pRes->mfFileRead(pDE);
-			byte* pData = (byte*)pRes->mfFileGetBuf(pDE);
-			if (!pData)
-			{
-				bTokenValid = false;
-				break;
-			}
-
-			uint32 nL = *(uint32*)pData;
-			if (CParserBin::m_bEndians)
-				SwapEndian(nL, eBigEndian);
-
-			if (nL * sizeof(uint32) > nSize)
-			{
-				bTokenValid = false;
-				break;
-			}
-
-			int nTableSize = nSize - (4 + nL * sizeof(uint32));
-			if (nTableSize < 0)
-			{
-				bTokenValid = false;
-				break;
-			}
-
-			pRes->mfCloseEntry(pDE->GetName(), pDE->GetFlags());
-		}
-	}
-
-	if (!bTokenValid)
-		CryFatalError("Invalid token data in shader cache file");
-#endif
-}
-
 void CHWShader::mfValidateDirEntries(CResFile* pRF)
 {
 #ifdef _DEBUG
@@ -849,34 +794,6 @@ void CHWShader::mfValidateDirEntries(CResFile* pRF)
 #endif
 }
 
-bool CHWShader::mfWriteoutTokensToCache()
-{
-	if (!m_CachedTokens.size())
-		return true;
-
-	char szName[256];
-#if defined(CRY_COMPILER_GCC) || defined(CRY_COMPILER_CLANG)
-	cry_sprintf(szName, "$MAP_%llx", m_nMaskGenFX);
-#else
-	cry_sprintf(szName, "$MAP_%I64x", m_nMaskGenFX);
-#endif
-
-	auto cache = AcquireDiskCache(cacheSource::user);
-	CRY_ASSERT_MESSAGE(cache && cache->m_pRes, "Could not acquire user disk cache");
-	if (cache && cache->m_pRes)
-	{
-		CDirEntry de(szName, m_CachedTokens.size(), RF_RES_$TOKENS);
-		cache->m_pRes->mfFileAdd(&de);
-		SDirEntryOpen* pOE = cache->m_pRes->mfOpenEntry(de.GetName());
-		pOE->pData = const_cast<char*>(m_CachedTokens.data());
-		cache->m_pRes->mfFlush();
-		cache->m_pRes->mfCloseEntry(de.GetName(), de.GetFlags());
-
-		return true;
-	}
-
-	return false;
-}
 
 bool CHWShader_D3D::mfStoreCacheTokenMap(const FXShaderToken& Table, const TArray<uint32>& SHData)
 {
@@ -913,8 +830,6 @@ bool CHWShader_D3D::mfStoreCacheTokenMap(const FXShaderToken& Table, const TArra
 
 	m_CachedTokens.resize(Data.size());
 	std::memcpy(&m_CachedTokens[0], Data.Data(), Data.size());
-
-	mfWriteoutTokensToCache();
 
 	return true;
 }
@@ -1700,7 +1615,6 @@ bool CHWShader_D3D::ConvertBinScriptToASCII(CParserBin& Parser, SHWSInstance* pI
 
 	uint32* pTokens = &Parser.m_Tokens[0];
 	uint32 nT = Parser.m_Tokens.size();
-	const char* szPrev = " ";
 	int nLevel = 0;
 	for (i = 0; i < nT; i++)
 	{
@@ -2421,40 +2335,18 @@ bool SDiskShaderCache::mfOptimiseCacheFile(SOptimiseStats* pStats)
 		if (!DE.IsValid())
 			continue;
 
-		if (DE.GetFlags() & RF_RES_$)
-		{
-			if (DE.GetName() == CShaderMan::s_cNameHEAD)
-				continue;
-
-			SData d;
-			d.nSizeComp = d.nSizeDecomp = 0;
-			d.pData = m_pRes->mfFileReadCompressed(&DE, d.nSizeDecomp, d.nSizeComp);
-			assert(d.pData && d.nSizeComp && d.nSizeDecomp);
-			if (!d.pData || !d.nSizeComp || !d.nSizeDecomp)
-				continue;
-			if (pStats)
-				pStats->nTokenDataSize += d.nSizeDecomp;
-			d.nOffset = 0;
-			d.needsProcessing = false;
-			d.Name = DE.GetName();
-			d.flags = DE.GetFlags();
-			Data.push_back(d);
-		}
-		else
-		{
-			SData d;
-			d.flags = DE.GetFlags();
-			d.nSizeComp = d.nSizeDecomp = 0;
-			d.pData = m_pRes->mfFileReadCompressed(&DE, d.nSizeDecomp, d.nSizeComp);
-			assert(d.pData && d.nSizeComp && d.nSizeDecomp);
-			if (!d.pData || !d.nSizeComp || !d.nSizeDecomp)
-				continue;
-			d.nOffset = DE.GetOffset();
-			d.needsProcessing = true;
-			d.Name = DE.GetName();
-			Data.push_back(d);
-			m_pRes->mfCloseEntry(DE.GetName(), DE.GetFlags());
-		}
+		SData d;
+		d.flags = DE.GetFlags();
+		d.nSizeComp = d.nSizeDecomp = 0;
+		d.pData = m_pRes->mfFileReadCompressed(&DE, d.nSizeDecomp, d.nSizeComp);
+		assert(d.pData && d.nSizeComp && d.nSizeDecomp);
+		if (!d.pData || !d.nSizeComp || !d.nSizeDecomp)
+			continue;
+		d.nOffset = DE.GetOffset();
+		d.needsProcessing = true;
+		d.Name = DE.GetName();
+		Data.push_back(d);
+		m_pRes->mfCloseEntry(DE.GetName(), DE.GetFlags());
 	}
 
 	int nOutFiles = Data.size();
@@ -2490,10 +2382,10 @@ bool SDiskShaderCache::mfOptimiseCacheFile(SOptimiseStats* pStats)
 	{
 		if (nOutFiles == Data.size())
 		{
-			iLog->Log(" Forcing optimise for deterministic order...");
+			iLog->Log(" Force optimizing for deterministic order...");
 		}
 
-		iLog->Log(" Optimising shaders resource '%s' (%" PRISIZE_T " items)...", m_pRes->mfGetFileName(), Data.size() - 1);
+		iLog->Log(" Optimizing shaders resource '%s' (%" PRISIZE_T " items)...", m_pRes->mfGetFileName(), Data.size());
 
 		m_pRes->mfClose();
 		m_pRes->mfOpen(RA_CREATE | (CParserBin::m_bEndians ? RA_ENDIANS : 0), &gRenDev->m_cEF.m_ResLookupDataMan[static_cast<int>(GetType())]);
@@ -2519,13 +2411,7 @@ bool SDiskShaderCache::mfOptimiseCacheFile(SOptimiseStats* pStats)
 			SData* pD = &Data[i];
 			CDirEntry de;
 
-			if (pD->flags & RF_RES_$)
-			{
-				de = CDirEntry(pD->Name, pD->nSizeDecomp, pD->flags);
-				SDirEntryOpen* pOE = m_pRes->mfOpenEntry(pD->Name);
-				pOE->pData = pD->pData;
-			}
-			else if (pD->flags & RF_DUPLICATE)
+			if (pD->flags & RF_DUPLICATE)
 			{
 				de = CDirEntry(pD->Name, pD->nSizeComp + 4, pD->nOffset, pD->flags | RF_COMPRESS);
 				SAFE_DELETE_ARRAY(pD->pData);
@@ -2572,7 +2458,7 @@ bool SDiskShaderCache::mfOptimiseCacheFile(SOptimiseStats* pStats)
 	}
 
 	if (pStats)
-		CryLog("  -- Shader cache '%s' stats: Entries: %d, Unique Entries: %d, Size: %.3f Mb, Compressed Size: %.3f Mb, Token data size: %3f Mb, Directory Size: %.3f Mb", m_pRes->mfGetFileName(), pStats->nEntries, pStats->nUniqueEntries, pStats->nSizeUncompressed / 1024.0f / 1024.0f, pStats->nSizeCompressed / 1024.0f / 1024.0f, pStats->nTokenDataSize / 1024.0f / 1024.0f, pStats->nDirDataSize / 1024.0f / 1024.0f);
+		CryLog("  -- Shader cache '%s' stats: Entries: %d, Unique Entries: %d, Size: %.3f Mb, Compressed Size: %.3f Mb, Directory Size: %.3f Mb", m_pRes->mfGetFileName(), pStats->nEntries, pStats->nUniqueEntries, pStats->nSizeUncompressed / 1024.0f / 1024.0f, pStats->nSizeCompressed / 1024.0f / 1024.0f, pStats->nDirDataSize / 1024.0f / 1024.0f);
 
 	return true;
 }
@@ -3214,7 +3100,6 @@ bool CHWShader_D3D::mfRequestAsync(CShader* pSH, SHWSInstance* pInst, std::vecto
 	pInst->m_pAsync->m_pFXShader->AddRef();
 	pInst->m_pAsync->m_nCombination = gRenDev->m_cEF.m_nCombinationsProcess;
 	assert(!stricmp(m_NameSourceFX.c_str(), pInst->m_pAsync->m_pFXShader->m_NameFile.c_str()));
-	InstContainer* pInstCont = &m_Insts;
 	pInst->m_pAsync->m_nHashInstance = pInst->m_Ident.m_nHash;
 	pInst->m_pAsync->m_RTMask = pInst->m_Ident.m_RTMask;
 	pInst->m_pAsync->m_LightMask = pInst->m_Ident.m_LightMask;
@@ -3324,7 +3209,10 @@ bool CHWShader_D3D::mfCompileHLSL_Int(CShader* pSH, char* prog_text, D3DBlob** p
 	const char* szProfile = mfProfileString(pInst->m_eClass);
 	const char* pFunCCryName = m_EntryFunc.c_str();
 
+#if CRY_PLATFORM_WINDOWS
 	bool bRes = true;
+#endif
+
 	if (CRenderer::CV_r_shadersdebug == 2)
 	{
 		mfSaveCGFile(prog_text, "TestCG");
@@ -3456,10 +3344,9 @@ D3DBlob* CHWShader_D3D::mfCompileHLSL(CShader* pSH, char* prog_text, void** ppCo
 	//	LOADING_TIME_PROFILE_SECTION(iSystem);
 
 	// Test adding source text to context
-	SHWSInstance* pInst = m_pCurInst;
 	string strErr;
 	D3DBlob* pCode = NULL;
-	HRESULT hr = S_OK;
+
 	if (!prog_text)
 	{
 		assert(0);
@@ -3468,7 +3355,8 @@ D3DBlob* CHWShader_D3D::mfCompileHLSL(CShader* pSH, char* prog_text, void** ppCo
 	if (!CRenderer::CV_r_shadersAllowCompilation)
 		return NULL;
 
-	bool bResult = mfCompileHLSL_Int(pSH, prog_text, &pCode, ppConstantTable, ppErrorMsgs, strErr, InstBindVars);
+	mfCompileHLSL_Int(pSH, prog_text, &pCode, ppConstantTable, ppErrorMsgs, strErr, InstBindVars);
+	
 	if (!pCode)
 	{
 		if (CRenderer::CV_r_shadersasynccompiling)
@@ -3845,7 +3733,6 @@ void CAsyncShaderTask::FlushPendingShaders()
 		return; // the build list is empty, might need to do some assert here
 	{
 		AUTO_LOCK(g_cAILock);
-		int n = 0;
 		for (pAI = BuildList().m_Prev; pAI != &BuildList(); pAI = pAINext)
 		{
 			pAINext = pAI->m_Prev;
@@ -4501,7 +4388,6 @@ const char* CHWShader::GetCurrentShaderCombinations(bool bForLevel) threadsafe
 
 	Name = CHWShader::mfGetClassName(eHWSC_Pixel);
 	pRL = CBaseResource::GetResourcesForClass(Name);
-	int n = 0;
 	if (pRL)
 	{
 		ResourcesMapItor itor;

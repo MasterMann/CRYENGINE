@@ -26,8 +26,7 @@ CParticleJobManager::CParticleJobManager()
 
 void CParticleJobManager::AddDeferredRender(CParticleEmitter* pEmitter, const SRenderContext& renderContext)
 {
-	SDeferredRender render(pEmitter, renderContext);
-	m_deferredRenders.push_back(render);
+	m_deferredRenders.emplace_back(pEmitter, renderContext);
 }
 
 void CParticleJobManager::ScheduleComputeVertices(CParticleComponentRuntime& runtime, CRenderObject* pRenderObject, const SRenderContext& renderContext)
@@ -95,7 +94,6 @@ void CParticleJobManager::Job_ScheduleUpdates()
 
 	// Schedule deferred emitters in high-priority jobs
 	ScheduleUpdateEmitters(m_emittersDeferred, JobManager::eHighPriority);
-	m_emittersDeferred.resize(0);
 
 	if (m_emittersVisible.size())
 	{
@@ -142,6 +140,7 @@ void CParticleJobManager::SynchronizeUpdates()
 	m_updateState.Wait();
 	m_emittersInvisible.resize(0);
 	m_emittersVisible.resize(0);
+	m_emittersDeferred.resize(0);
 }
 
 void CParticleJobManager::DeferredRender()
@@ -156,7 +155,7 @@ void CParticleJobManager::DeferredRender()
 		renderContext.m_fogVolumeId = render.m_fogVolumeId;
 		render.m_pEmitter->RenderDeferred(renderContext);
 	}
-	m_deferredRenders.clear();
+	m_deferredRenders.pop_back(m_deferredRenders.size());
 }
 
 

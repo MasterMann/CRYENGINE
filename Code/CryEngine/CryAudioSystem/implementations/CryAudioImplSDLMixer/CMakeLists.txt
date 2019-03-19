@@ -8,42 +8,34 @@ add_sources("CryAudioImpl_uber_0.cpp"
 	SOURCE_GROUP "Header Files"
 		"Common.h"
 		"CVars.h"
-		"Debug.h"
-		"Environment.h"
 		"Event.h"
-		"File.h"
+		"EventInstance.h"
 		"GlobalData.h"
 		"Impl.h"
 		"Listener.h"
 		"Object.h"
-		"Parameter.h"
 		"resource.h"
-		"Setting.h"
 		"SoundEngine.h"
-		"StandaloneFile.h"
-		"stdafx.h"
-		"SwitchState.h"
-		"Trigger.h"
+		"VolumeParameter.h"
+		"VolumeState.h"
 	SOURCE_GROUP "Source Files"
 		"Common.cpp"
 		"CryAudioImpl.cpp"
 		"CVars.cpp"
-		"Debug.cpp"
 		"Event.cpp"
+		"EventInstance.cpp"
 		"Impl.cpp"
 		"Listener.cpp"
 		"Object.cpp"
-		"Parameter.cpp"
-		"Setting.cpp"
 		"SoundEngine.cpp"
-		"StandaloneFile.cpp"
-		"SwitchState.cpp"
-		"Trigger.cpp"
+		"VolumeParameter.cpp"
+		"VolumeState.cpp"
 )
 
 add_sources("NoUberFile"
 	SOURCE_GROUP "Root"
 		"stdafx.cpp"
+		"stdafx.h"
 )
 
 end_sources()
@@ -67,44 +59,31 @@ if(AUDIO_SDL_MIXER)
 		target_link_libraries(${THIS_PROJECT} PRIVATE libmodplug_static)
 	endif()
 
+	target_compile_definitions(${THIS_PROJECT} PRIVATE $<$<NOT:$<CONFIG:Release>>:CRY_AUDIO_IMPL_SDLMIXER_USE_DEBUG_CODE>)
 	target_include_directories(${THIS_PROJECT} PRIVATE ../../Common)
 else()
 	CryFileContainer(CryAudioImplSDLMixer SOLUTION_FOLDER "CryEngine/Audio/Implementations")
 endif()
 if (ORBIS OR CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
 	target_compile_options(${THIS_PROJECT} PRIVATE
-		-Wno-unknown-pragmas
-		-Wno-reorder
-		-Wno-parentheses
 		-Wno-format
-		-Wno-switch
-		-Wno-unused-value
-		-Wno-comment
-		-Wno-empty-body
-		-Wno-format-security
-		-Wno-unused-function
 		-Wno-multichar
+		-Wno-parentheses
+		-Wno-unknown-pragmas
+		-Wno-unused-function
 		-Wno-unused-private-field
 	)
 elseif(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
 	target_compile_options(${THIS_PROJECT} PRIVATE
-		-Wno-unused-function
-		-Wno-unused-value
-		-Wno-sign-compare
-		-Wno-ignored-attributes
-		-Wno-int-in-bool-context
-		-Wno-unused-but-set-variable
-		-Wno-misleading-indentation
-		-Wno-strict-aliasing
-		-Wno-maybe-uninitialized
-		-Wno-unknown-pragmas
-		-Wno-unused-const-variable
-		-Wno-multichar
-		-Wno-char-subscripts
-		-Wno-parentheses
-		-Wno-comment
-		-Wno-address
 		-Wno-format
-		-Wno-switch
+		-Wno-maybe-uninitialized
+		-Wno-misleading-indentation
+		-Wno-multichar
+		-Wno-parentheses
+		-Wno-sign-compare
+		-Wno-strict-aliasing
+		-Wno-unknown-pragmas
+		-Wno-unused-but-set-variable
+		-Wno-unused-function
 	)
 endif()

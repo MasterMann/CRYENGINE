@@ -766,13 +766,11 @@ add_sources("CryRenderer_render_elements_uber_1.cpp"
 	PROJECTS CryRenderGNM CryRenderD3D11 CryRenderD3D12 CryRenderVulkan CryRenderOpenGL
 	SOURCE_GROUP "Common\\\\RendElements"
 		"../Common/RendElements/CREParticle.cpp"
-		"../Common/RendElements/CRESky.cpp"
 		"../Common/RendElements/CREWaterOcean.cpp"
 		"../Common/RendElements/CREWaterVolume.cpp"
 		"../Common/RendElements/RendElement.cpp"
 		"../Common/RendElements/CRELensOptics.h"
 		"../Common/RendElements/CREClientPoly.h"
-		"../Common/RendElements/Stars.h"
 		"../Common/RendElements/CREMeshImpl.h"
 	SOURCE_GROUP "Common\\\\RendElements\\\\LensOptics"
 		"../Common/RendElements/CameraOrbs.cpp"
@@ -857,7 +855,6 @@ add_sources("CryRenderer_uber_0.cpp"
 		"D3D_SVO.h"
 	SOURCE_GROUP "Source Files"
 		"D3DAmbientOcclusion.cpp"
-		"D3DColorGradingController.cpp"
 		"D3DDebug.cpp"
 		"D3DDeferredRender.cpp"
 		"D3DDeferredShading.cpp"
@@ -953,7 +950,6 @@ add_sources("CryRenderer_uber_3.cpp"
 		"../Common/RenderPipeline.h"
 		"../Common/DeferredRenderUtils.h"
 		"../Common/RenderFrameProfiler.h"
-		"../Common/IColorGradingControllerInt.h"
 		"../Common/OcclQuery.h"
 		"../Common/RenderAuxGeom.h"
 		"../Common/Renderer.h"
@@ -968,7 +964,6 @@ add_sources("CryRenderer_uber_3.cpp"
 		"../Common/RenderItemDrawer.h"
 		"../Common/LockFreeAddVector.h"
 	SOURCE_GROUP "Header Files"
-		"ShadowTextureGroupManager.h"
 		"DeviceManager/D3D11/DeviceSubmissionQueue_D3D11.inl"
 		"../Common/Textures/ITextureStreamer.h"
 		"../Common/Shaders/ShaderAllocator.h"
@@ -977,7 +972,6 @@ add_sources("CryRenderer_uber_3.cpp"
 		"../Common/ISmartGlassContext.h"
 		"../Common/LightVolumeBuffer.h"
 		"../Common/ParticleBuffer.h"
-		"D3DColorGradingController.h"
 		"D3DDebug.h"
 		"D3DDeferredShading.h"
 		"D3DHWShader.h"
@@ -1128,6 +1122,8 @@ add_sources("CryRenderer_uber_6.cpp"
 		"GraphicsPipeline/ShadowMap.cpp"
 		"GraphicsPipeline/ShadowMask.h"
 		"GraphicsPipeline/ShadowMask.cpp"
+		"GraphicsPipeline/Sky.h"
+		"GraphicsPipeline/Sky.cpp"
 		"GraphicsPipeline/Snow.h"
 		"GraphicsPipeline/Snow.cpp"
 		"GraphicsPipeline/StandardGraphicsPipeline.h"
@@ -1340,7 +1336,6 @@ if (RENDERER_VULKAN)
 
 	if (ORBIS OR CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
 		target_compile_options(${THIS_PROJECT} PRIVATE
-			-Wno-unused-variable
 			-Wno-unused-value
 			-Wno-unknown-pragmas
 			-Wno-format
@@ -1355,7 +1350,6 @@ if (RENDERER_VULKAN)
 		target_compile_options(${THIS_PROJECT} PRIVATE
 			-Wno-unused-function
 			-Wno-unused-value
-			-Wno-unused-variable
 			-Wno-sign-compare
 			-Wno-ignored-attributes
 			-Wno-int-in-bool-context
@@ -1384,6 +1378,7 @@ endif()
 
 if (EXISTS "${SCE_ORBIS_SDK_DIR}" AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/GNM")
 	if (RENDERER_GNM)
+		list(APPEND extra_defines -DGNM_FEATURE_VALIDATION=$<AND:$<NOT:$<CONFIG:Release>>,$<BOOL:RENDERER_GNM>>)
 		CryEngineModule(CryRenderGNM PCH "../StdAfx.cpp" SOLUTION_FOLDER "CryEngine")
 		target_include_directories(${THIS_PROJECT} PRIVATE ..)
 		target_compile_definitions(${THIS_PROJECT} PRIVATE -D_RENDERER -DDO_RENDERSTATS -DCRY_RENDERER_GNM=40 ${extra_defines})
@@ -1391,7 +1386,6 @@ if (EXISTS "${SCE_ORBIS_SDK_DIR}" AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/GNM")
 		target_link_libraries(${THIS_PROJECT} PRIVATE lzma lzss lz4 zlib SceSystemService_stub_weak SceGnmDriver_stub_weak $<$<NOT:$<CONFIG:Release>>:SceGnm> $<$<NOT:$<CONFIG:Release>>:SceGnmx> $<$<NOT:$<CONFIG:Release>>:SceDbg_stub_weak> $<$<CONFIG:Release>:SceGnm_lto> $<$<CONFIG:Release>:SceGnmx_lto>)
 
 		target_compile_options(${THIS_PROJECT} PRIVATE
-			-Wno-unused-variable
 			-Wno-parentheses
 			-Wno-reorder
 			-Wno-unused-value

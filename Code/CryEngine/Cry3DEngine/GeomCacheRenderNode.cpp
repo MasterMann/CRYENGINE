@@ -1,13 +1,5 @@
 // Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
-// ------------------------------------------------------------------------
-//  File name:   GeomCacheRenderNode.cpp
-//  Created:     19/7/2012 by Axel Gneiting
-//  Description: Draws geometry caches
-// -------------------------------------------------------------------------
-//
-////////////////////////////////////////////////////////////////////////////
-
 #include "StdAfx.h"
 #include "xxhash.h"
 
@@ -97,11 +89,6 @@ void CGeomCacheRenderNode::SetBBox(const AABB& bBox)
 	m_bBox = bBox;
 }
 
-const AABB CGeomCacheRenderNode::GetBBox() const
-{
-	return m_bBox;
-}
-
 void CGeomCacheRenderNode::UpdateBBox()
 {
 	AABB newAABB;
@@ -140,7 +127,7 @@ void CGeomCacheRenderNode::UpdateBBox()
 	}
 }
 
-void CGeomCacheRenderNode::GetLocalBounds(AABB& bbox)
+void CGeomCacheRenderNode::GetLocalBounds(AABB& bbox) const
 {
 	bbox = m_currentAABB;
 }
@@ -359,11 +346,6 @@ IMaterial* CGeomCacheRenderNode::GetMaterial(Vec3* pHitPos) const
 	}
 
 	return NULL;
-}
-
-float CGeomCacheRenderNode::GetMaxViewDist()
-{
-	return m_maxViewDist;
 }
 
 void CGeomCacheRenderNode::GetMemoryUsage(ICrySizer* pSizer) const
@@ -1529,8 +1511,7 @@ void CGeomCacheRenderNode::PrecacheStandIn(IStatObj* pStandIn, float fImportance
 		if (pLod)
 		{
 			CObjManager* pObjManager = GetObjManager();
-			Matrix34A matrix = GetMatrix();
-			static_cast<CStatObj*>(pLod)->UpdateStreamableComponents(fImportance, matrix, bFullUpdate, nLod);
+			static_cast<CStatObj*>(pLod)->UpdateStreamableComponents(fImportance, bFullUpdate, nLod);
 			pObjManager->PrecacheStatObjMaterial(pLod->GetMaterial(), fDistance * fInvScale, pLod, bFullUpdate, bDrawNear);
 		}
 	}

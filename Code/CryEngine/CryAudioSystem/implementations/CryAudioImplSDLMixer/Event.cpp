@@ -2,9 +2,11 @@
 
 #include "stdafx.h"
 #include "Event.h"
-#include "Trigger.h"
-
-#include <SDL_mixer.h>
+#include "Common.h"
+#include "Impl.h"
+#include "Object.h"
+#include "EventInstance.h"
+#include "SoundEngine.h"
 
 namespace CryAudio
 {
@@ -13,52 +15,24 @@ namespace Impl
 namespace SDL_mixer
 {
 //////////////////////////////////////////////////////////////////////////
-ERequestStatus CEvent::Stop()
+ETriggerResult CEvent::Execute(IObject* const pIObject, TriggerInstanceId const triggerInstanceId)
 {
-	// need to make a copy because the callback
-	// registered with Mix_ChannelFinished can edit the list
-	ChannelList const channels = m_channels;
-	int const fadeOutTime = m_pTrigger->GetFadeOutTime();
-
-	for (int const channel : channels)
-	{
-		if (fadeOutTime == 0)
-		{
-			Mix_HaltChannel(channel);
-		}
-		else
-		{
-			Mix_FadeOutChannel(channel, fadeOutTime);
-		}
-	}
-
-	return ERequestStatus::Pending;
+	auto const pObject = static_cast<CObject*>(pIObject);
+	return SoundEngine::ExecuteEvent(pObject, this, triggerInstanceId);
 }
 
 //////////////////////////////////////////////////////////////////////////
-void CEvent::Pause()
+void CEvent::Stop(IObject* const pIObject)
 {
-	// need to make a copy because the callback
-	// registered with Mix_ChannelFinished can edit the list
-	ChannelList const channels = m_channels;
-
-	for (int const channel : channels)
-	{
-		Mix_Pause(channel);
-	}
+	auto const pObject = static_cast<CObject*>(pIObject);
+	pObject->StopEvent(m_id);
 }
 
 //////////////////////////////////////////////////////////////////////////
-void CEvent::Resume()
+void CEvent::DecrementNumInstances()
 {
-	// need to make a copy because the callback
-	// registered with Mix_ChannelFinished can edit the list
-	ChannelList channels = m_channels;
-
-	for (int const channel : channels)
-	{
-		Mix_Resume(channel);
-	}
+	CRY_ASSERT_MESSAGE(m_numInstances > 0, "Number of event instances must be at least 1 during %s", __FUNCTION__);
+	--m_numInstances;
 }
 } // namespace SDL_mixer
 } // namespace Impl

@@ -63,37 +63,13 @@ public:
 
 	virtual void AddToComponent(CParticleComponent* pComponent, SComponentParams* pParams) override
 	{
-		if (!(m_pStaticObject = Get3DEngine()->FindStatObjectByFilename(m_meshName)))
-		{
-			GetPSystem()->CheckFileAccess(m_meshName);
-			m_pStaticObject = Get3DEngine()->LoadStatObj(m_meshName, NULL, NULL, m_piecesMode == EPiecesMode::Whole);
-		}
-		pParams->m_pMesh = m_pStaticObject;
-		pParams->m_meshCentered = m_originMode == EOriginMode::Center;
-		if (m_pStaticObject)
+		pComponent->LoadResources.add(this);
+		LoadResources(*pComponent);
+		if (pParams->m_pMesh)
 		{
 			pComponent->RenderDeferred.add(this);
 			pComponent->AddParticleData(EPVF_Position);
 			pComponent->AddParticleData(EPQF_Orientation);
-
-			m_aSubObjects.clear();
-			float maxRadiusSqr = 0.0f;
-			if (m_piecesMode != EPiecesMode::Whole)
-			{
-				int subObjectCount = m_pStaticObject->GetSubObjectCount();
-				for (int i = 0; i < subObjectCount; ++i)
-				{
-					if (IStatObj::SSubObject* pSub = m_pStaticObject->GetSubObject(i))
-						if (pSub->nType == STATIC_SUB_OBJECT_MESH && pSub->pStatObj)
-						{
-							if (string(pSub->name).Right(5) == "_main")
-								continue;
-							m_aSubObjects.push_back(pSub);
-							SetMax(maxRadiusSqr, MeshRadiusSqr(pSub->pStatObj));
-						}
-				}
-			}
-
 			if (m_aSubObjects.size() > 0)
 			{
 				// Require per-particle sub-objects
@@ -101,18 +77,74 @@ public:
 				pComponent->OnEdit.add(this);
 				pComponent->InitParticles.add(this);
 				pComponent->AddParticleData(EPDT_MeshGeometry);
-				if (m_piecesMode == EPiecesMode::AllPieces)
-				{
-					pComponent->AddParticleData(EPDT_SpawnId);
-					pParams->m_scaleParticleCount *= m_aSubObjects.size();
-				}
 			}
-			else
+		}
+	}
+
+	virtual void LoadResources(CParticleComponent& component) override
+	{
+		CRY_PFX2_PROFILE_DETAIL;
+
+		SComponentParams& params = component.ComponentParams();
+		if (!params.m_pMesh)
+		{
+			IStatObj* pMeshObj = nullptr;
+			if (GetPSystem()->IsRuntime())
+				pMeshObj = Get3DEngine()->FindStatObjectByFilename(m_meshName);
+			if (!pMeshObj)
 			{
-				maxRadiusSqr = MeshRadiusSqr(m_pStaticObject);
+				GetPSystem()->CheckFileAccess(m_meshName);
+				pMeshObj = Get3DEngine()->LoadStatObj(m_meshName, NULL, NULL, m_piecesMode == EPiecesMode::Whole);
 			}
-			if (m_sizeMode == ESizeMode::Scale)
-				pParams->m_scaleParticleSize *= sqrt(maxRadiusSqr);
+			params.m_pMesh = pMeshObj;
+			params.m_meshCentered = m_originMode == EOriginMode::Center;
+
+			m_aSubObjects.clear();
+
+			if (pMeshObj)
+			{
+				float maxRadiusSqr = 0.0f;
+				if (m_piecesMode != EPiecesMode::Whole)
+				{
+					int subObjectCount = pMeshObj->GetSubObjectCount();
+					for (int i = 0; i < subObjectCount; ++i)
+					{
+						if (IStatObj::SSubObject* pSub = pMeshObj->GetSubObject(i))
+							if (pSub->nType == STATIC_SUB_OBJECT_MESH && pSub->pStatObj)
+							{
+								if (string(pSub->name).Right(5) == "_main")
+									continue;
+								m_aSubObjects.push_back(pSub);
+								SetMax(maxRadiusSqr, MeshRadiusSqr(pSub->pStatObj));
+							}
+					}
+				}
+
+				if (m_aSubObjects.size() > 0)
+				{
+					// Require per-particle sub-objects
+					assert(m_aSubObjects.size() < 256);
+					component.OnEdit.add(this);
+					component.InitParticles.add(this);
+					component.AddParticleData(EPDT_MeshGeometry);
+					if (m_piecesMode == EPiecesMode::AllPieces)
+					{
+						component.AddParticleData(EPDT_SpawnId);
+						params.m_scaleParticleCount *= m_aSubObjects.size();
+					}
+				}
+				else
+				{
+					maxRadiusSqr = MeshRadiusSqr(pMeshObj);
+				}
+				if (m_sizeMode == ESizeMode::Scale)
+					params.m_scaleParticleSize *= sqrt(maxRadiusSqr);
+			}
+		}
+		if (params.m_pMesh && GetCVars()->e_ParticlesPrecacheAssets)
+		{
+			m_pObjManager->PrecacheStatObj(static_cast<CStatObj*>(&*params.m_pMesh), 0,
+				params.m_pMesh->GetMaterial(), 1.0f, 0.0f, true, true);
 		}
 	}
 
@@ -136,12 +168,12 @@ public:
 
 		CParticleContainer& container = runtime.GetContainer();
 		TIOStream<IMeshObj*> meshes = container.IOStream(EPDT_MeshGeometry);
-		TIStream<uint> spawnIds = container.IStream(EPDT_SpawnId);
 		IOVec3Stream positions = container.GetIOVec3Stream(EPVF_Position);
 		IOQuatStream orientations = container.GetIOQuatStream(EPQF_Orientation);
 		IFStream sizes = container.GetIFStream(EPDT_Size, 1.0f);
-		uint pieceCount = m_aSubObjects.size();
-		Vec3 center = m_pStaticObject->GetAABB().GetCenter();
+		const uint spawnIdOffset = container.GetSpawnIdOffset();
+		const uint pieceCount = m_aSubObjects.size();
+		Vec3 center = runtime.ComponentParams().m_pMesh->GetAABB().GetCenter();
 
 		for (auto particleId : runtime.SpawnedRange())
 		{
@@ -152,7 +184,7 @@ public:
 			}
 			else if (m_piecesMode == EPiecesMode::AllPieces)
 			{
-				piece = spawnIds.Load(particleId);
+				piece = particleId + spawnIdOffset;
 			}
 			piece %= pieceCount;
 
@@ -207,7 +239,7 @@ public:
 		const Vec3 camPosition = passInfo.GetCamera().GetPosition();
 		const bool hasAlphas = container.HasData(EPDT_Alpha);
 
-		IMeshObj* pMeshObj = m_pStaticObject;
+		IMeshObj* pMeshObj = runtime.ComponentParams().m_pMesh;
 		AABB bBox = pMeshObj->GetAABB();
 		float sizeScale = m_sizeMode == ESizeMode::Size ? rsqrt_fast(MeshRadiusSqr(pMeshObj)) : 1.0f;
 
@@ -266,7 +298,6 @@ private:
 	EPiecesMode                        m_piecesMode;
 	EPiecePlacement                    m_piecePlacement;
 
-	_smart_ptr<IStatObj>               m_pStaticObject;
 	std::vector<IStatObj::SSubObject*> m_aSubObjects;
 };
 

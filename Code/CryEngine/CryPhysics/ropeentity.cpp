@@ -1911,7 +1911,6 @@ int CRopeEntity::Step(float time_interval)
 	if (m_nSegs<=0 || !m_bAwake)
 		return 1;
 	CRY_PROFILE_FUNCTION(PROFILE_PHYSICS );
-	PHYS_ENTITY_PROFILER
 	
 	int iCaller = get_iCaller_int();
 	float seglen=m_length/m_nSegs, rseglen=m_nSegs/max(1e-6f,m_length),scale; 
@@ -1961,6 +1960,8 @@ int CRopeEntity::Step(float time_interval)
 		time_interval = max(0.001f, min(m_timeStepFull-m_timeStepPerformed, time_interval));
 	else
 		return 1;
+
+	PHYS_ENTITY_PROFILER
 
 	m_timeStepPerformed += time_interval;
 	m_lastTimeStep = time_interval;
@@ -3029,9 +3030,7 @@ float CRopeEntity::GetExtent(EGeomForm eForm)	const
 
 void CRopeEntity::GetRandomPoints(Array<PosNorm> points, CRndGen& seed, EGeomForm eForm) const
 {
-
-	CGeomExtent const& ext = m_Extents[GeomForm_Edges];
-	if (eForm != GeomForm_Vertices && !ext.NumParts())
+	if (eForm != GeomForm_Vertices && !m_Extents[GeomForm_Edges].NumParts())
 		return points.fill(ZERO);
 
 	strided_pointer<Vec3> vtx;
@@ -3045,7 +3044,7 @@ void CRopeEntity::GetRandomPoints(Array<PosNorm> points, CRndGen& seed, EGeomFor
 			dir = (vtx[min(i+1,nVerts-1)] - vtx[max(i-1,0)]).normalized();
 		}
 		else {
-			int i = ext.RandomPart(seed);
+			int i = m_Extents[GeomForm_Edges].RandomPart(seed);
 			ran.vPos = vtx[i]+(vtx[i+1]-vtx[i])*seed.GetRandom(0.0f, 1.0f);
 			dir = (vtx[i+1]-vtx[i]).normalized();
 		}

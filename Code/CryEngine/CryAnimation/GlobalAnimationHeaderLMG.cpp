@@ -660,14 +660,16 @@ bool GlobalAnimationHeaderLMG::LoadFromXML(CAnimationSet* pAnimationSet, XmlNode
 
 						for (size_t p = 0; p < CRY_ARRAY_COUNT(facePointNames); ++p)
 						{
-							if (nodeExample->getAttr(facePointNames[p], face.idx[p]))
+							int32 facePointID; // int32 in order to detect possible negative numbers
+							if (nodeExample->getAttr(facePointNames[p], facePointID))
 							{
-								if (face.idx[p] >= (numExamples + numPseudo))
+								if (facePointID < 0 || facePointID >= (numExamples + numPseudo))
 								{
-									m_Status.Format("Error: Blend annotation %d contains a reference to non-existing example with index %d.", int32(i), int32(face.idx[p]));
+									m_Status.Format("Error: Blend annotation %d contains a reference to non-existing example with index %d.", int32(i), facePointID);
 									gEnv->pLog->LogError("CryAnimation %s: %s", m_Status.c_str(), pathnameLMG);
 									return false;
 								}
+								face.idx[p] = uint8(facePointID);
 								face.num++;
 							}
 						}
@@ -1138,11 +1140,10 @@ bool GlobalAnimationHeaderLMG::Export2HTR(const char* szAnimationName, const cha
 		Vec3 rel = arrAnimation[0][k].t;
 		arrAnimation[0][k] = arrAnimation[0][k - 1] * arrAnimation[0][k];
 		Vec3 abs1 = arrAnimation[0][k].t;
-		uint32 ddd = 0;
 	}
 
-	bool htr = GlobalAnimationHeaderCAF::SaveHTR(szAnimationName, savePath, jointNameArray, jointParentArray, arrAnimation, parrDefJoints);
-	bool caf = GlobalAnimationHeaderCAF::SaveICAF(szAnimationName, savePath, jointNameArray, arrAnimation);
+	GlobalAnimationHeaderCAF::SaveHTR(szAnimationName, savePath, jointNameArray, jointParentArray, arrAnimation, parrDefJoints);
+	GlobalAnimationHeaderCAF::SaveICAF(szAnimationName, savePath, jointNameArray, arrAnimation);
 	return true;
 }
 

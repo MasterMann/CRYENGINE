@@ -25,6 +25,8 @@ ICVar* CVar::pDrawAreas = nullptr;
 ICVar* CVar::pDrawAreaGrid = nullptr;
 ICVar* CVar::pDrawAreaGridCells = nullptr;
 ICVar* CVar::pDrawAreaDebug = nullptr;
+ICVar* CVar::pLogAreaDebug = nullptr;
+ICVar* CVar::pUpdateAreas = nullptr;
 ICVar* CVar::pFlowgraphComponents = nullptr;
 
 ICVar* CVar::pSysSpecLight = nullptr;
@@ -47,6 +49,7 @@ int CVar::es_SaveLoadUseLUANoSaveFlag = 1;
 float CVar::es_EntityUpdatePosDelta = 0.0f;
 int CVar::es_debugDrawEntityIDs = 0;
 int CVar::es_MaxJointFx = 8;
+int CVar::es_UseProximityTriggerSystem = 1;
 
 int CVar::es_profileComponentUpdates = 0;
 
@@ -192,14 +195,21 @@ void CVar::Init()
 	              "Render debug info on active layers: \n"
 	              "0 - inactive \n"
 	              "1 - active brush layers \n"
-	              "2 - all layer info \n"
-	              "3 - all layer and all layer pak info");
+	              "2 - all layers \n"
+	              "3 - all layers and memory info \n"
+	              "4 - all layers without folders\n"
+	              "5 - layer activation info");
 	REGISTER_CVAR(es_SaveLoadUseLUANoSaveFlag, 0, VF_CHEAT, "Save&Load optimization : use lua flag to not serialize entities, for example rigid bodies.");
 
 	pDrawAreas = REGISTER_INT("es_DrawAreas", 0, VF_CHEAT, "Enables drawing of Areas");
 	pDrawAreaGrid = REGISTER_INT("es_DrawAreaGrid", 0, VF_CHEAT, "Enables drawing of Area Grid");
 	pDrawAreaGridCells = REGISTER_INT("es_DrawAreaGridCells", 0, VF_CHEAT, "Enables drawing of Area Grid Cells' number and coordinates. Requires \"es_DrawAreaGrid\" to be enabled!");
 	pDrawAreaDebug = REGISTER_INT("es_DrawAreaDebug", 0, VF_CHEAT, "Enables debug drawing of Areas, set 2 for log details");
+	pLogAreaDebug = REGISTER_INT("es_LogAreaDebug", 0, VF_CHEAT, "Enables debug drawing of Areas, set 2 for log details");
+	pUpdateAreas = REGISTER_INT("es_UpdateAreas", 1, VF_CHEAT,
+		"Toggles area updating.\n"
+		"Usage: es_UpdateAreas [0/1]\n"
+		"Default is 1 (on). Set to 0 to prevent all areas from updating.");
 
 	REGISTER_CVAR(es_UsePhysVisibilityChecks, 1, 0,
 	              "Activates physics quality degradation and forceful sleeping for invisible and faraway entities");
@@ -247,6 +257,12 @@ void CVar::Init()
 	              "Toggles flowgraph components. Requires restart of the engine.\n"
 	              "Usage: es_UpdateEntities [0/1]\n"
 	              "Default is 0 (off). Set to 1 to enable flowgraph components.");
+
+	REGISTER_CVAR(es_UseProximityTriggerSystem, 1, 
+		VF_CHEAT | VF_REQUIRE_LEVEL_RELOAD, 
+		"Whether to register entities in the partition grid used for the proximity trigger system.\n"
+	    "0 - Entities will not be registered in the partition grid and can not be found by proximity queries."
+	    "1 - Entities can be registered in the partition grid and could then be found by proximity queries.");
 
 	// Call mapping in case the cvar was already set
 	MapEntityBBoxesCVar(pEntityBBoxes);

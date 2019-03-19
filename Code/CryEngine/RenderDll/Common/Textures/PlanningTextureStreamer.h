@@ -10,12 +10,9 @@
 struct SPlanningMemoryState
 {
 	ptrdiff_t nMemStreamed;
-	ptrdiff_t nStaticTexUsage;
 	ptrdiff_t nPoolLimit;
-	ptrdiff_t nTargetPhysicalLimit;
 	ptrdiff_t nMemLimit;
 	ptrdiff_t nMemFreeSlack;
-	ptrdiff_t nUnknownPoolUsage;
 	ptrdiff_t nMemBoundStreamed;
 	ptrdiff_t nMemBoundStreamedPers;
 	ptrdiff_t nMemTemp;
@@ -136,7 +133,6 @@ struct SPlanningTextureOrderKey
 	uint32    bUnloaded        : 1;
 	uint32    nStreamPrio      : 3;
 	uint32    nSlicesMinus1    : 9;
-	uint32    nSlicesPotMinus1 : 9;
 
 	enum
 	{
@@ -174,7 +170,6 @@ struct SPlanningTextureOrderKey
 
 		uint32 nSlices   = pTex->StreamGetNumSlices();
 		nSlicesMinus1    = nSlices - 1;
-		nSlicesPotMinus1 = (1u << (32 - (nSlices > 1 ? countLeadingZeros32(nSlices - 1) : 32))) - 1;
 
 		nCurMip          = pTex->StreamGetLoadedMip();
 		eTF              = pTex->GetDstFormat();

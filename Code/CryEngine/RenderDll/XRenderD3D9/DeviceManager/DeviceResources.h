@@ -84,6 +84,22 @@ struct SResourceLayout
 #endif
 };
 
+namespace DeviceResources_Internal
+{
+ILINE void EscapeStringForCStyleFormatting(string& stringToEscape)
+{
+	size_t offset = 0;
+	while (true)
+	{
+		offset = stringToEscape.find('%', offset);
+		if (offset == string::npos)
+			break;
+		stringToEscape.replace(offset, 1, "%%");
+		offset += strlen("%%");
+	}
+}
+}
+
 class CDeviceResource
 {
 
@@ -98,6 +114,7 @@ public:
 
 	inline void SetDebugName(const char* name) const
 	{
+		using namespace DeviceResources_Internal;
 		::SetDebugName(m_pNativeResource, name);
 	}
 
@@ -395,8 +412,8 @@ public:
 	{
 		CDeviceResource::SetDebugName(name);
 
-		::SetDebugName(m_pStagingResource[0], "%s Write-StagingB", name);
-		::SetDebugName(m_pStagingResource[1], "%s Read-StagingB", name);
+		::SetDebugName(m_pStagingResource[0], string(name).append(" Write-StagingB"));
+		::SetDebugName(m_pStagingResource[1], string(name).append(" Read-StagingB"));
 	}
 #endif
 

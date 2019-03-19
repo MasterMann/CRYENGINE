@@ -8,16 +8,21 @@
 
 namespace CryAudio
 {
+namespace Impl
+{
+struct IObject;
+} // namespace Impl
+
 enum class ECallbackRequestType : EnumFlagsType
 {
 	None,
-	ReportStartedEvent, //!< Only relevant for delayed playback.
-	ReportFinishedEvent,
+	ReportStartedTriggerConnectionInstance,
+	ReportFinishedTriggerConnectionInstance,
 	ReportFinishedTriggerInstance,
-	ReportStartedFile,
-	ReportStoppedFile,
-	ReportVirtualizedEvent,
-	ReportPhysicalizedEvent,
+	ReportPhysicalizedObject,
+	ReportVirtualizedObject,
+	ReportContextActivated,
+	ReportContextDeactivated,
 };
 
 //////////////////////////////////////////////////////////////////////////
@@ -41,7 +46,7 @@ struct SCallbackRequestData final : public SCallbackRequestDataBase
 		: SCallbackRequestDataBase(T)
 	{}
 
-	explicit SCallbackRequestData(SCallbackRequestData<T> const* const pACMRData)
+	explicit SCallbackRequestData(SCallbackRequestData<T> const* const pCRData)
 		: SCallbackRequestDataBase(T)
 	{}
 
@@ -50,143 +55,105 @@ struct SCallbackRequestData final : public SCallbackRequestDataBase
 
 //////////////////////////////////////////////////////////////////////////
 template<>
-struct SCallbackRequestData<ECallbackRequestType::ReportStartedEvent> final : public SCallbackRequestDataBase, public CPoolObject<SCallbackRequestData<ECallbackRequestType::ReportStartedEvent>, stl::PSyncMultiThread>
+struct SCallbackRequestData<ECallbackRequestType::ReportStartedTriggerConnectionInstance> final : public SCallbackRequestDataBase, public CPoolObject<SCallbackRequestData<ECallbackRequestType::ReportStartedTriggerConnectionInstance>, stl::PSyncMultiThread>
 {
-	explicit SCallbackRequestData(CEvent& event_, bool const isVirtual_)
-		: SCallbackRequestDataBase(ECallbackRequestType::ReportStartedEvent)
-		, event(event_)
-		, isVirtual(isVirtual_)
+	explicit SCallbackRequestData(TriggerInstanceId const triggerInstanceId_, ETriggerResult const result_)
+		: SCallbackRequestDataBase(ECallbackRequestType::ReportStartedTriggerConnectionInstance)
+		, triggerInstanceId(triggerInstanceId_)
+		, result(result_)
 	{}
 
-	explicit SCallbackRequestData(SCallbackRequestData<ECallbackRequestType::ReportStartedEvent> const* const pACMRData)
-		: SCallbackRequestDataBase(ECallbackRequestType::ReportStartedEvent)
-		, event(pACMRData->event)
-		, isVirtual(pACMRData->isVirtual)
+	explicit SCallbackRequestData(SCallbackRequestData<ECallbackRequestType::ReportStartedTriggerConnectionInstance> const* const pCRData)
+		: SCallbackRequestDataBase(ECallbackRequestType::ReportStartedTriggerConnectionInstance)
+		, triggerInstanceId(pCRData->triggerInstanceId)
+		, result(pCRData->result)
 	{}
 
 	virtual ~SCallbackRequestData() override = default;
 
-	CEvent&    event;
-	bool const isVirtual;
+	TriggerInstanceId const triggerInstanceId;
+	ETriggerResult const    result;
 };
 
 //////////////////////////////////////////////////////////////////////////
 template<>
-struct SCallbackRequestData<ECallbackRequestType::ReportFinishedEvent> final : public SCallbackRequestDataBase, public CPoolObject<SCallbackRequestData<ECallbackRequestType::ReportFinishedEvent>, stl::PSyncMultiThread>
+struct SCallbackRequestData<ECallbackRequestType::ReportFinishedTriggerConnectionInstance> final : public SCallbackRequestDataBase, public CPoolObject<SCallbackRequestData<ECallbackRequestType::ReportFinishedTriggerConnectionInstance>, stl::PSyncMultiThread>
 {
-	explicit SCallbackRequestData(CEvent& event_, bool const bSuccess_)
-		: SCallbackRequestDataBase(ECallbackRequestType::ReportFinishedEvent)
-		, event(event_)
-		, bSuccess(bSuccess_)
+	explicit SCallbackRequestData(TriggerInstanceId const triggerInstanceId_, ETriggerResult const result_)
+		: SCallbackRequestDataBase(ECallbackRequestType::ReportFinishedTriggerConnectionInstance)
+		, triggerInstanceId(triggerInstanceId_)
+		, result(result_)
 	{}
 
-	explicit SCallbackRequestData(SCallbackRequestData<ECallbackRequestType::ReportFinishedEvent> const* const pACMRData)
-		: SCallbackRequestDataBase(ECallbackRequestType::ReportFinishedEvent)
-		, event(pACMRData->event)
-		, bSuccess(pACMRData->bSuccess)
+	explicit SCallbackRequestData(SCallbackRequestData<ECallbackRequestType::ReportFinishedTriggerConnectionInstance> const* const pCRData)
+		: SCallbackRequestDataBase(ECallbackRequestType::ReportFinishedTriggerConnectionInstance)
+		, triggerInstanceId(pCRData->triggerInstanceId)
+		, result(pCRData->result)
 	{}
 
 	virtual ~SCallbackRequestData() override = default;
 
-	CEvent&    event;
-	bool const bSuccess;
-};
-
-//////////////////////////////////////////////////////////////////////////
-template<>
-struct SCallbackRequestData<ECallbackRequestType::ReportVirtualizedEvent> final : public SCallbackRequestDataBase, public CPoolObject<SCallbackRequestData<ECallbackRequestType::ReportVirtualizedEvent>, stl::PSyncMultiThread>
-{
-	explicit SCallbackRequestData(CEvent& event_)
-		: SCallbackRequestDataBase(ECallbackRequestType::ReportVirtualizedEvent)
-		, event(event_)
-	{}
-
-	explicit SCallbackRequestData(SCallbackRequestData<ECallbackRequestType::ReportVirtualizedEvent> const* const pACMRData)
-		: SCallbackRequestDataBase(ECallbackRequestType::ReportVirtualizedEvent)
-		, event(pACMRData->event)
-	{}
-
-	virtual ~SCallbackRequestData() override = default;
-
-	CEvent& event;
-};
-
-//////////////////////////////////////////////////////////////////////////
-template<>
-struct SCallbackRequestData<ECallbackRequestType::ReportPhysicalizedEvent> final : public SCallbackRequestDataBase, public CPoolObject<SCallbackRequestData<ECallbackRequestType::ReportPhysicalizedEvent>, stl::PSyncMultiThread>
-{
-	explicit SCallbackRequestData(CEvent& event_)
-		: SCallbackRequestDataBase(ECallbackRequestType::ReportPhysicalizedEvent)
-		, event(event_)
-	{}
-
-	explicit SCallbackRequestData(SCallbackRequestData<ECallbackRequestType::ReportPhysicalizedEvent> const* const pACMRData)
-		: SCallbackRequestDataBase(ECallbackRequestType::ReportPhysicalizedEvent)
-		, event(pACMRData->event)
-	{}
-
-	virtual ~SCallbackRequestData() override = default;
-
-	CEvent& event;
+	TriggerInstanceId const triggerInstanceId;
+	ETriggerResult const    result;
 };
 
 //////////////////////////////////////////////////////////////////////////
 template<>
 struct SCallbackRequestData<ECallbackRequestType::ReportFinishedTriggerInstance> final : public SCallbackRequestDataBase, public CPoolObject<SCallbackRequestData<ECallbackRequestType::ReportFinishedTriggerInstance>, stl::PSyncNone> // Intentionally not PSyncMultiThread because this gets only called from the audio thread.
 {
-	explicit SCallbackRequestData(ControlId const triggerId_)
+	explicit SCallbackRequestData(ControlId const triggerId_, EntityId const entityId_)
 		: SCallbackRequestDataBase(ECallbackRequestType::ReportFinishedTriggerInstance)
 		, triggerId(triggerId_)
+		, entityId(entityId_)
 	{}
 
-	explicit SCallbackRequestData(SCallbackRequestData<ECallbackRequestType::ReportFinishedTriggerInstance> const* const pACMRData)
+	explicit SCallbackRequestData(SCallbackRequestData<ECallbackRequestType::ReportFinishedTriggerInstance> const* const pCRData)
 		: SCallbackRequestDataBase(ECallbackRequestType::ReportFinishedTriggerInstance)
-		, triggerId(pACMRData->triggerId)
+		, triggerId(pCRData->triggerId)
+		, entityId(pCRData->entityId)
 	{}
 
 	virtual ~SCallbackRequestData() override = default;
 
 	ControlId const triggerId;
+	EntityId const  entityId;
 };
 
 //////////////////////////////////////////////////////////////////////////
 template<>
-struct SCallbackRequestData<ECallbackRequestType::ReportStartedFile> final : public SCallbackRequestDataBase
+struct SCallbackRequestData<ECallbackRequestType::ReportPhysicalizedObject> final : public SCallbackRequestDataBase, public CPoolObject<SCallbackRequestData<ECallbackRequestType::ReportPhysicalizedObject>, stl::PSyncMultiThread>
 {
-	explicit SCallbackRequestData(CStandaloneFile& standaloneFile_, bool const bSuccess_)
-		: SCallbackRequestDataBase(ECallbackRequestType::ReportStartedFile)
-		, standaloneFile(standaloneFile_)
-		, bSuccess(bSuccess_)
+	explicit SCallbackRequestData(Impl::IObject* const pIObject_)
+		: SCallbackRequestDataBase(ECallbackRequestType::ReportPhysicalizedObject)
+		, pIObject(pIObject_)
 	{}
 
-	explicit SCallbackRequestData(SCallbackRequestData<ECallbackRequestType::ReportStartedFile> const* const pACMRData)
-		: SCallbackRequestDataBase(ECallbackRequestType::ReportStartedFile)
-		, standaloneFile(pACMRData->standaloneFile)
-		, bSuccess(pACMRData->bSuccess)
+	explicit SCallbackRequestData(SCallbackRequestData<ECallbackRequestType::ReportPhysicalizedObject> const* const pCRData)
+		: SCallbackRequestDataBase(ECallbackRequestType::ReportPhysicalizedObject)
+		, pIObject(pCRData->pIObject)
 	{}
 
 	virtual ~SCallbackRequestData() override = default;
 
-	CStandaloneFile& standaloneFile;
-	bool const       bSuccess;
+	Impl::IObject* const pIObject;
 };
 
 //////////////////////////////////////////////////////////////////////////
 template<>
-struct SCallbackRequestData<ECallbackRequestType::ReportStoppedFile> final : public SCallbackRequestDataBase
+struct SCallbackRequestData<ECallbackRequestType::ReportVirtualizedObject> final : public SCallbackRequestDataBase, public CPoolObject<SCallbackRequestData<ECallbackRequestType::ReportVirtualizedObject>, stl::PSyncMultiThread>
 {
-	explicit SCallbackRequestData(CStandaloneFile& standaloneFile_)
-		: SCallbackRequestDataBase(ECallbackRequestType::ReportStoppedFile)
-		, standaloneFile(standaloneFile_)
+	explicit SCallbackRequestData(Impl::IObject* const pIObject_)
+		: SCallbackRequestDataBase(ECallbackRequestType::ReportVirtualizedObject)
+		, pIObject(pIObject_)
 	{}
 
-	explicit SCallbackRequestData(SCallbackRequestData<ECallbackRequestType::ReportStoppedFile> const* const pACMRData)
-		: SCallbackRequestDataBase(ECallbackRequestType::ReportStoppedFile)
-		, standaloneFile(pACMRData->standaloneFile)
+	explicit SCallbackRequestData(SCallbackRequestData<ECallbackRequestType::ReportVirtualizedObject> const* const pCRData)
+		: SCallbackRequestDataBase(ECallbackRequestType::ReportVirtualizedObject)
+		, pIObject(pCRData->pIObject)
 	{}
 
 	virtual ~SCallbackRequestData() override = default;
 
-	CStandaloneFile& standaloneFile;
+	Impl::IObject* const pIObject;
 };
 } // namespace CryAudio

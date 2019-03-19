@@ -145,7 +145,7 @@ SERIALIZATION_ENUM_END()
 SERIALIZATION_ENUM_BEGIN_NESTED(CharacterAttachment, ProxyPurpose, "Proxy Pupose")
 SERIALIZATION_ENUM(CharacterAttachment::AUXILIARY, "auxiliary", "Auxiliary")
 SERIALIZATION_ENUM(CharacterAttachment::CLOTH, "cloth", "Cloth")
-SERIALIZATION_ENUM(CharacterAttachment::RAGDOLL, "ragdoll", "Rag Doll")
+SERIALIZATION_ENUM(CharacterAttachment::RAGDOLL, "ragdoll", "Main Physics")
 SERIALIZATION_ENUM_END()
 
 SERIALIZATION_ENUM_BEGIN_NESTED(SJointPhysics, EType, "JointPhysics Type")
@@ -1397,6 +1397,11 @@ void CharacterAttachment::Serialize(Serialization::IArchive& ar)
 				ar(Serialization::Range(m_vclothParams.debugDrawNndc,0, std::numeric_limits<int>::max()), "debugDrawNNDC", "Draw Nearest Neighbor Distance Constraints");
 				ar(Serialization::Range(m_vclothParams.debugPrint,0, std::numeric_limits<int>::max()), "debugPrint", "Debug");
 				ar.closeBlock();
+			}
+			
+			if (m_vclothParams.hide)
+			{
+				ar.warning(*this, "Hidden by default.");
 			}
 
 			ar.closeBlock(); // close "vcloth-parameter"
@@ -2685,10 +2690,7 @@ void CharacterDefinition::ApplyToCharacter(bool* skinSetChanged, ICharacterInsta
 		nMaskForDynamicFlags |= FLAGS_ATTACH_HIDE_MAIN_PASS;
 		nMaskForDynamicFlags |= FLAGS_ATTACH_HIDE_SHADOW_PASS;
 		nMaskForDynamicFlags |= FLAGS_ATTACH_HIDE_RECURSION;
-		nMaskForDynamicFlags |= FLAGS_ATTACH_NEAREST_NOFOV;
 		nMaskForDynamicFlags |= FLAGS_ATTACH_NO_BBOX_INFLUENCE;
-		nMaskForDynamicFlags |= FLAGS_ATTACH_COMBINEATTACHMENT;
-		nMaskForDynamicFlags |= FLAGS_ATTACH_MERGED_FOR_SHADOWS;
 		uint32 flags = pIAttachment->GetFlags() & nMaskForDynamicFlags;
 		pIAttachment->SetFlags(attachment.m_nFlags | flags);
 		pIAttachment->HideAttachment((attachment.m_nFlags & FLAGS_ATTACH_HIDE_ATTACHMENT) != 0);
@@ -3127,9 +3129,7 @@ void CharacterDefinition::ApplyFaceAttachment(IAttachment* pIAttachment, ICharac
 
 void CharacterDefinition::ApplySkinAttachment(IAttachment* pIAttachment, ICharacterManager* characterManager, const CharacterAttachment& desc, ICharacterInstance* pICharacterInstance, bool* skinChanged) const
 {
-	uint32 type = pIAttachment->GetType();
 	IAttachmentObject* iattachmentObject = pIAttachment->GetIAttachmentObject();
-	IAttachmentManager* attachmentManager = pICharacterInstance->GetIAttachmentManager();
 
 	string existingMaterialFilename;
 	string existingBindingFilename;

@@ -4,6 +4,7 @@
 #include "ParticleEffect.h"
 #include "ParticleEmitter.h"
 #include "ParticleSystem.h"
+#include "Material.h"
 #include <CrySerialization/STL.h>
 #include <CrySerialization/IArchive.h>
 #include <CrySerialization/SmartPtr.h>
@@ -62,7 +63,7 @@ void CParticleEffect::Compile()
 	for (auto& component : m_components)
 	{
 		component->m_componentId = id++;
-		if (!component->IsEnabled())
+		if (!component->IsActive())
 			continue;
 		component->Compile();
 		if (component->MainPreUpdate.size())
@@ -79,7 +80,7 @@ void CParticleEffect::Compile()
 		if (!component->GetParentComponent())
 		{
 			m_topComponents.push_back(component);
-			if (!component->IsEnabled())
+			if (!component->IsActive())
 				continue;
 			component->UpdateTimings();
 			const STimingParams& timings = component->ComponentParams();
@@ -116,14 +117,14 @@ void CParticleEffect::Sort()
 {
 	SortedComponents sortedComponents(m_components);
 	assert(sortedComponents.size() == m_components.size());
-	std::swap(m_components, sortedComponents);
+	m_components.swap(sortedComponents);
 }
 
 void CParticleEffect::SortFromTop()
 {
 	SortedComponents sortedComponents(m_topComponents);
 	assert(sortedComponents.size() == m_components.size());
-	std::swap(m_components, sortedComponents);
+	m_components.swap(sortedComponents);
 }
 
 CParticleComponent* CParticleEffect::FindComponentByName(const char* name) const
@@ -184,13 +185,14 @@ string CParticleEffect::GetShortName() const
 
 int CParticleEffect::GetEditVersion() const
 {
-	int version = m_editVersion + m_components.size();
-	for (const auto& pComponent : m_components)
+	uint32 version = m_editVersion;
+	uint32 shift = 1;
+	for (const CParticleComponent* pComponent : m_components)
 	{
 		const SComponentParams& params = pComponent->GetComponentParams();
-		const CMatInfo* pMatInfo = (CMatInfo*)params.m_pMaterial.get();
-		if (pMatInfo)
-			version += pMatInfo->GetModificationId();
+		if (const CMatInfo* pMatInfo = (CMatInfo*)params.m_pMaterial.get())
+			version += pMatInfo->GetModificationId() << shift;
+		shift = (shift + 1) & 31;
 	}
 	return version;
 }
@@ -202,6 +204,8 @@ void CParticleEffect::SetName(cstr name)
 
 void CParticleEffect::Serialize(Serialization::IArchive& ar)
 {
+	CRY_PROFILE_FUNCTION(PROFILE_PARTICLE);
+
 	uint documentVersion = 1;
 	if (ar.isOutput())
 		documentVersion = gCurrentVersion;
@@ -233,8 +237,8 @@ void CParticleEffect::Serialize(Serialization::IArchive& ar)
 
 	if (ar.isInput())
 	{
-		auto it = std::remove_if(m_components.begin(), m_components.end(), [](TComponentPtr ptr){ return !ptr; });
-		m_components.erase(it, m_components.end());
+		stl::find_and_erase_all(m_components, nullptr);
+		m_components.shrink_to_fit();
 		SetChanged();
 		for (auto& component : m_components)
 			component->SetChanged();
@@ -268,7 +272,7 @@ IParticleComponent* CParticleEffect::AddComponent()
 
 void CParticleEffect::RemoveComponent(uint componentIdx, bool all)
 {
-	auto pComp = m_components[componentIdx];
+	CParticleComponent* pComp = m_components[componentIdx];
 	stl::find_and_erase(pComp->GetParentChildren(), pComp);
 	while (all && pComp->m_children.size())
 		pComp = pComp->m_children.back();
@@ -284,6 +288,28 @@ void CParticleEffect::SetChanged()
 	if (!m_dirty)
 		++m_editVersion;
 	m_dirty = true;
+}
+
+bool CParticleEffect::LoadResources()
+{
+	for (auto& comp : m_components)
+	{
+		if (!comp->IsActive())
+			continue;
+		comp->LoadResources(*comp);
+		comp->FinalizeCompile();
+	}
+	return true;
+}
+
+void CParticleEffect::UnloadResources()
+{
+	for (auto& comp : m_components)
+	{
+		auto& params = comp->ComponentParams();
+		params.m_pMaterial = nullptr;
+		params.m_pMesh = nullptr;
+	}
 }
 
 Serialization::SStruct CParticleEffect::GetEffectOptionsSerializer() const

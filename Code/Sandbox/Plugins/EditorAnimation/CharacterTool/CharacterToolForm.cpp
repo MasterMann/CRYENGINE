@@ -69,7 +69,7 @@
 #include <QtViewPane.h>
 #include <CryIcon.h>
 #include "Controls/QuestionDialog.h"
-#include <ICommandManager.h>
+#include <Commands/ICommandManager.h>
 #include "Preferences/ViewportPreferences.h"
 
 extern CharacterTool::System* g_pCharacterToolSystem;
@@ -751,7 +751,7 @@ void CharacterToolForm::UpdateLayoutMenu()
 	vector<string> layouts = FindLayoutNames();
 	for (size_t i = 0; i < layouts.size(); ++i)
 	{
-		QAction* action = addToLayout(layouts[i].c_str(), SLOT(OnLayoutSet()), QVariant(layouts[i].c_str()));
+		addToLayout(layouts[i].c_str(), SLOT(OnLayoutSet()), QVariant(layouts[i].c_str()));
 	}
 	if (!layouts.empty())
 		m_menuLayout->addSeparator();
@@ -887,8 +887,6 @@ void CharacterToolForm::OnRenderOriginal(const SRenderContext& context)
 
 void CharacterToolForm::OnCharacterLoaded()
 {
-	ICharacterInstance* character = m_system->document->CompressedCharacter();
-
 	const char* filename = m_system->document->LoadedCharacterFilename();
 	for (size_t i = 0; i < m_recentCharacters.size(); ++i)
 		if (stricmp(m_recentCharacters[i].c_str(), filename) == 0)
@@ -994,6 +992,11 @@ void CharacterToolForm::OnViewportUpdate()
 void CharacterToolForm::OnAnimEventPresetPanelPutEvent()
 {
 
+}
+
+int CharacterToolForm::ProxyMakingMode() 
+{ 
+	return m_createProxyModeButton->isChecked() ? 1 : (m_createRagdollModeButton->isChecked() ? 2 : 0); 
 }
 
 bool CharacterToolForm::event(QEvent* ev)

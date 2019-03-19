@@ -27,26 +27,20 @@ public:
 			m_killOnParentDeath = true;
 	}
 
-	virtual CParticleFeature* ResolveDependency(CParticleComponent* pComponent) override
-	{
-		float maxLifetime = m_lifeTime.GetValueRange().end;
-		if (m_killOnParentDeath)
-		{
-			if (CParticleComponent* pParent = pComponent->GetParentComponent())
-				SetMin(maxLifetime, pParent->ComponentParams().m_maxParticleLife);
-		}
-		pComponent->ComponentParams().m_maxParticleLife = maxLifetime;
-		return this;
-	}
-
 	virtual void AddToComponent(CParticleComponent* pComponent, SComponentParams* pParams) override
 	{
 		m_lifeTime.AddToComponent(pComponent, this, EPDT_LifeTime);
 		pComponent->PreInitParticles.add(this);
-		pParams->m_maxParticleLife = m_lifeTime.GetValueRange().end;
 
+		float maxLifetime = m_lifeTime.GetValueRange().end;
 		if (m_killOnParentDeath)
+		{
 			pComponent->PostUpdateParticles.add(this);
+			if (CParticleComponent* pParent = pComponent->GetParentComponent())
+				SetMin(maxLifetime, pParent->ComponentParams().m_maxParticleLife);
+		}
+
+		pComponent->ComponentParams().m_maxParticleLife = maxLifetime;
 		pComponent->UpdateGPUParams.add(this);
 	}
 
@@ -58,37 +52,46 @@ public:
 		CParticleContainer& container = runtime.GetContainer();
 		IOFStream lifeTimes = container.GetIOFStream(EPDT_LifeTime);
 		IOFStream invLifeTimes = container.GetIOFStream(EPDT_InvLifeTime);
+		IOFStream normAges = container.GetIOFStream(EPDT_NormalAge);
 
-		if (m_lifeTime.IsEnabled() && m_lifeTime.GetBaseValue())
-		{
-			m_lifeTime.Init(runtime, EPDT_LifeTime);
-			if (m_lifeTime.HasModifiers())
-			{
-				for (auto particleGroupId : runtime.SpawnedRangeV())
-				{
-					const floatv lifetime = lifeTimes.Load(particleGroupId);
-					const floatv invLifeTime = rcp(max(lifetime, ToFloatv(FLT_EPSILON)));
-					invLifeTimes.Store(particleGroupId, invLifeTime);
-				}
-			}
-			else
-			{
-				invLifeTimes.Fill(runtime.SpawnedRange(), rcp(m_lifeTime.GetBaseValue()));
-			}
-		}
-		else
+		if (m_lifeTime.GetBaseValue() == 0.0f)
 		{
 			lifeTimes.Fill(runtime.SpawnedRange(), 0.0f);
 			invLifeTimes.Fill(runtime.SpawnedRange(), 0.0f);
+			normAges.Fill(runtime.SpawnedRange(), 0.0f);
 		}
-
-		// Convert ages from absolute to normalized
-		IOFStream normAges = container.GetIOFStream(EPDT_NormalAge);
-
-		for (auto particleGroupId : runtime.SpawnedRangeV())
+		else
 		{
-			// Convert absolute spawned particle age to normal age / life
-			normAges[particleGroupId] *= invLifeTimes[particleGroupId];
+			if (!m_lifeTime.IsEnabled())
+			{
+				// Infinite lifetime. Store huge lifetime instead, so absolute age can be computed when needed
+				static const float maxLifeTime = float(1 << 30);
+				lifeTimes.Fill(runtime.SpawnedRange(), maxLifeTime);
+				invLifeTimes.Fill(runtime.SpawnedRange(), 1.0f / maxLifeTime);
+			}
+			else
+			{
+				m_lifeTime.Init(runtime, EPDT_LifeTime);
+				if (m_lifeTime.HasModifiers())
+				{
+					for (auto particleGroupId : runtime.SpawnedRangeV())
+					{
+						const floatv lifetime = lifeTimes.Load(particleGroupId);
+						const floatv invLifeTime = rcp(max(lifetime, ToFloatv(FLT_EPSILON)));
+						invLifeTimes.Store(particleGroupId, invLifeTime);
+					}
+				}
+				else
+				{
+					invLifeTimes.Fill(runtime.SpawnedRange(), 1.0f / m_lifeTime.GetBaseValue());
+				}
+			}
+
+			// Convert ages from absolute to normalized
+			for (auto particleGroupId : runtime.SpawnedRangeV())
+			{
+				normAges[particleGroupId] *= invLifeTimes[particleGroupId];
+			}
 		}
 	}
 
@@ -118,8 +121,8 @@ public:
 	}
 
 protected:
-	CParamMod<EDD_PerParticle, UInfFloat> m_lifeTime          = 1;
-	bool                                  m_killOnParentDeath = false;
+	CParamMod<EDD_Particle, UInfFloat> m_lifeTime          = 1;
+	bool                               m_killOnParentDeath = false;
 };
 
 CRY_PFX2_IMPLEMENT_FEATURE(CParticleFeature, CFeatureLifeTime, "Life", "Time", colorLife);

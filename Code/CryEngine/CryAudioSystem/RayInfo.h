@@ -2,13 +2,22 @@
 
 #pragma once
 
-#include <CryPhysics/IPhysics.h>
+#if defined(CRY_AUDIO_USE_OCCLUSION)
+	#include <CryPhysics/IPhysics.h>
 
 namespace CryAudio
 {
 class CObject;
 
-static const size_t s_maxRayHits = 10;
+constexpr uint8 g_maxRayHits = 30;
+
+struct SRayHitInfo
+{
+	SRayHitInfo() = default;
+
+	float distance = 0.0f;
+	short surfaceIndex = 0;
+};
 
 class CRayInfo
 {
@@ -18,16 +27,17 @@ public:
 
 	void Reset();
 
-	CObject* pObject = nullptr;
-	size_t   samplePosIndex = 0;
-	size_t   numHits = 0;
-	float    totalSoundOcclusion = 0.0f;
-	ray_hit  hits[s_maxRayHits];
+	CObject*    pObject = nullptr;
+	uint8       samplePosIndex = 0;
+	uint8       numHits = 0;
+	float       totalSoundOcclusion = 0.0f;
+	SRayHitInfo hits[g_maxRayHits];
 
-#if defined(INCLUDE_AUDIO_PRODUCTION_CODE)
+	#if defined(CRY_AUDIO_USE_DEBUG_CODE)
 	Vec3  startPosition = ZERO;
 	Vec3  direction = ZERO;
 	float distanceToFirstObstacle = FLT_MAX;
-#endif // INCLUDE_AUDIO_PRODUCTION_CODE
+	#endif // CRY_AUDIO_USE_DEBUG_CODE
 };
-} // namespace CryAudio
+}      // namespace CryAudio
+#endif // CRY_AUDIO_USE_OCCLUSION

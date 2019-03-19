@@ -3,6 +3,7 @@
 #pragma once
 
 #include "ParticleCommon.h"
+#include <CryThreading/IJobManager.h>
 
 class CRenderObject;
 
@@ -25,7 +26,8 @@ public:
 			, m_passInfo(renderContext.m_passInfo)
 			, m_distance(renderContext.m_distance)
 			, m_lightVolumeId(renderContext.m_lightVolumeId)
-			, m_fogVolumeId(renderContext.m_fogVolumeId) {}
+			, m_fogVolumeId(renderContext.m_fogVolumeId)
+		{}
 		CParticleEmitter*  m_pEmitter;
 		SRendParams        m_rParam;
 		SRenderingPassInfo m_passInfo;

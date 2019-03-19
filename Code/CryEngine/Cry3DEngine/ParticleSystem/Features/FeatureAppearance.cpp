@@ -9,11 +9,6 @@ namespace pfx2
 
 MakeDataType(EPDT_Tile, uint8);
 
-SERIALIZATION_ENUM_DEFINE(EVariantMode, ,
-                          Random,
-                          Ordered
-                          )
-
 class CFeatureAppearanceTextureTiling : public CParticleFeature
 {
 public:
@@ -38,8 +33,6 @@ public:
 		if (VariantCount() > 1)
 		{
 			pComponent->AddParticleData(EPDT_Tile);
-			if (m_variantMode == EVariantMode::Ordered)
-				pComponent->AddParticleData(EPDT_SpawnId);
 			pComponent->InitParticles.add(this);
 		}
 
@@ -50,10 +43,10 @@ public:
 	{
 		CRY_PROFILE_FUNCTION(PROFILE_PARTICLE);
 
-		if (m_variantMode == EVariantMode::Random)
-			AssignTiles<EVariantMode::Random>(runtime);
+		if (m_variantMode == EDistribution::Random)
+			AssignTiles<EDistribution::Random>(runtime);
 		else
-			AssignTiles<EVariantMode::Ordered>(runtime);
+			AssignTiles<EDistribution::Ordered>(runtime);
 	}
 
 	virtual void Serialize(Serialization::IArchive& ar) override
@@ -72,27 +65,27 @@ private:
 	UBytePos          m_tilesY;
 	UBytePos          m_tileCount;
 	UByte             m_firstTile;
-	EVariantMode      m_variantMode = EVariantMode::Random;
+	EDistribution     m_variantMode = EDistribution::Random;
 	STextureAnimation m_anim;
 
-	template<EVariantMode mode>
+	template<EDistribution mode>
 	void AssignTiles(CParticleComponentRuntime& runtime)
 	{
 		CParticleContainer& container = runtime.GetContainer();
 		TIOStream<uint8> tiles = container.IOStream(EPDT_Tile);
-		TIStream<uint> spawnIds = container.IStream(EPDT_SpawnId);
-		uint variantCount = VariantCount();
+		const uint spawnIdOffset = container.GetSpawnIdOffset();
+		const uint variantCount = VariantCount();
 
 		for (auto particleId : runtime.SpawnedRange())
 		{
 			uint32 tile;
-			if (mode == EVariantMode::Random)
+			if (mode == EDistribution::Random)
 			{
 				tile = runtime.Chaos().Rand();
 			}
-			else if (mode == EVariantMode::Ordered)
+			else if (mode == EDistribution::Ordered)
 			{
-				tile = spawnIds.Load(particleId);
+				tile = particleId + spawnIdOffset;
 			}
 			tile %= variantCount;
 			tile *= m_anim.m_frameCount;
@@ -111,18 +104,45 @@ public:
 
 	virtual void AddToComponent(CParticleComponent* pComponent, SComponentParams* pParams) override
 	{
-		if (!m_materialName.empty())
-		{
-			pParams->m_pMaterial = gEnv->p3DEngine->GetMaterialManager()->FindMaterial(m_materialName);
-			if (!pParams->m_pMaterial)
-			{
-				GetPSystem()->CheckFileAccess(m_materialName);
-				pParams->m_pMaterial = gEnv->p3DEngine->GetMaterialManager()->LoadMaterial(m_materialName);
-			}
-		}
-		if (!m_textureName.empty())
-			pParams->m_diffuseMap = m_textureName;
+		pComponent->LoadResources.add(this);
+		LoadResources(*pComponent);
 		MakeGpuInterface(pComponent, gpu_pfx2::eGpuFeatureType_Dummy);
+	}
+
+	virtual void LoadResources(CParticleComponent& component) override
+	{
+		SComponentParams& params = component.ComponentParams();
+		if (!params.m_pMaterial)
+		{
+			if (!m_materialName.empty())
+			{
+				if (GetPSystem()->IsRuntime())
+					params.m_pMaterial = gEnv->p3DEngine->GetMaterialManager()->FindMaterial(m_materialName);
+				if (!params.m_pMaterial)
+				{
+					GetPSystem()->CheckFileAccess(m_materialName);
+					params.m_pMaterial = gEnv->p3DEngine->GetMaterialManager()->LoadMaterial(m_materialName);
+				}
+				if (params.m_pMaterial)
+				{
+					IShader* pShader = params.m_pMaterial->GetShaderItem().m_pShader;
+					if (!pShader)
+						params.m_pMaterial = nullptr;
+					else if (params.m_requiredShaderType != eST_All)
+					{
+						if (pShader->GetFlags() & EF_LOADED && pShader->GetShaderType() != params.m_requiredShaderType)
+							params.m_pMaterial = nullptr;
+					}
+				}
+			}
+			if (!params.m_pMaterial && !m_textureName.empty())
+				params.m_pMaterial = GetPSystem()->GetTextureMaterial(m_textureName, 
+					params.m_usesGPU, component.GPUComponentParams().facingMode);
+		}
+		if (params.m_pMaterial && GetCVars()->e_ParticlesPrecacheAssets)
+		{
+			params.m_pMaterial->PrecacheMaterial(0.0f, nullptr, true, true);
+		}
 	}
 
 	virtual void Serialize(Serialization::IArchive& ar) override

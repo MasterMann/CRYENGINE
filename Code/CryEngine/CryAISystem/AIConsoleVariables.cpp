@@ -700,13 +700,20 @@ void AIConsoleVars::Init()
 	REGISTER_CVAR2("ai_MNMPathFinderQuota", &MNMPathFinderQuota, 0.001f, VF_CHEAT | VF_CHEAT_NOCHECK,
 	               "Set path finding frame time quota in seconds (Set to 0 for no limit)");
 	REGISTER_CVAR2("ai_MNMPathFinderDebug", &MNMPathFinderDebug, 0, VF_CHEAT | VF_CHEAT_NOCHECK,
-	               "[0-1] Enable/Disable debug draw statistics on pathfinder load");
+	               "[0-1] Enable/Disable debug draw statistics on pathfinder load. Note that construction and beautify times are only calculated once this CVAR is enabled.");
 
 	REGISTER_CVAR2("ai_MNMProfileMemory", &MNMProfileMemory, 0, VF_CHEAT | VF_CHEAT_NOCHECK,
 	               "[0-1] Display navigation system memory statistics");
 
 	REGISTER_CVAR2("ai_MNMDebugAccessibility", &MNMDebugAccessibility, 0, VF_CHEAT | VF_CHEAT_NOCHECK,
-	               "[0-1] Display navigation reachable areas in blue and not reachable areas in red");
+	               "[0-1] Display navigation unreachable areas in gray color.");
+
+	REGISTER_CVAR2("ai_MNMDebugDrawTileStates", &MNMDebugDrawTileStates, 0, VF_CHEAT | VF_CHEAT_NOCHECK,
+		"[0-1] Display tiles' borders based on their update state. \n"
+		"orange - in active updates queue\n"
+		"yellow - update after stabilization\n"
+		"blue - changed during disabled regeneration \n"
+		"gray - changed during level load");
 
 	REGISTER_CVAR2("ai_MNMEditorBackgroundUpdate", &MNMEditorBackgroundUpdate, 1, VF_NULL,
 	               "[0-1] Enable/Disable editor background update of the Navigation Meshes");

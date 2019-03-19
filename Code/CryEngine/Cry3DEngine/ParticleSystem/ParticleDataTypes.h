@@ -11,29 +11,41 @@
 namespace pfx2
 {
 
+///////////////////////////////////////////////////////////////////////////
+template<typename F>
+struct Slope
+{
+	F start;
+	F scale;
+
+	Slope(F lo = convert<F>(), F hi = convert<F>(1))
+		: start(lo), scale(hi - lo) {}
+	template<typename F2> Slope(const Slope<F2>& o)
+		: start(convert<F>(o.start)), scale(convert<F>(o.scale)) {}
+
+	F operator()(F val) const { return MAdd(val, scale, start); }
+};
+
+///////////////////////////////////////////////////////////////////////////////
+// Random number generator
+
 struct SChaosKey
 {
 public:
 	explicit SChaosKey(uint32 key) : m_key(key) {}
 	SChaosKey(const SChaosKey& key) : m_key(key.m_key) {}
-	SChaosKey(SChaosKey key1, SChaosKey key2);
-	SChaosKey(SChaosKey key1, SChaosKey key2, SChaosKey key3);
 
 	uint32 Rand();
 	uint32 Rand(uint32 range);
 	float  RandUNorm();
 	float  RandSNorm();
+	float operator()() { return RandUNorm(); }
 
-	struct Range
+	struct Range: Slope<float>
 	{
-		float scale, bias;
-		Range(float lo, float hi);
+		Range(float lo = 0, float hi = 1);
 	};
-	float Rand(Range range);
-
-	Vec2  RandCircle();
-	Vec2  RandDisc();
-	Vec3  RandSphere();
+	float operator()(Range range);
 
 private:
 	uint32 m_key;
@@ -43,7 +55,6 @@ private:
 
 struct SChaosKeyV
 {
-	explicit SChaosKeyV(SChaosKey key);
 	explicit SChaosKeyV(uint32 key);
 	explicit SChaosKeyV(uint32v keys) : m_keys(keys) {}
 	uint32v Rand();
@@ -51,12 +62,11 @@ struct SChaosKeyV
 	floatv  RandUNorm();
 	floatv  RandSNorm();
 
-	struct Range
+	struct Range: Slope<floatv>
 	{
-		floatv scale, bias;
-		Range(float lo, float hi);
+		Range(float lo = 0, float hi = 1);
 	};
-	floatv Rand(Range range);
+	floatv operator()(Range range);
 
 private:
 	uint32v m_keys;
@@ -68,22 +78,103 @@ typedef SChaosKey SChaosKeyV;
 
 #endif
 
+template<uint Dim, typename T = std::array<float, Dim>>
+struct SChaosKeyN
+{
+	SChaosKeyN(SChaosKey& chaos)
+		: m_chaos(chaos) {}
+
+	void SetRange(uint e, Range range, bool isOpen = false)
+	{
+		m_ranges[e] = SChaosKey::Range(range.start, range.end);
+	}
+
+	T operator()()
+	{
+		T result;
+		for (uint e = 0; e < Dim; ++e)
+			result[e] = m_chaos(m_ranges[e]);
+		return result;
+	}
+
+private:
+	SChaosKey&       m_chaos;
+	SChaosKey::Range m_ranges[Dim];
+};
+
+///////////////////////////////////////////////////////////////////////////////
+// Sequential number generator
+
+template<uint Dim, typename T = std::array<float, Dim>>
+struct SOrderKeyN
+{
+	SOrderKeyN(uint key = 0)
+		: m_key(float(key))
+	{
+		for (uint e = 0; e < Dim; ++e)
+			m_modulusInv[e] = 1.0f;
+	}
+
+	void SetModulus(uint modulus, uint e = 0)
+	{
+		m_modulusInv[e] = 1.0f / float(modulus);
+	}
+
+	void SetRange(uint e, Range range, bool isOpen = false)
+	{
+		m_ranges[e] = Slope<float>(range.start, range.end);
+		if (!isOpen && m_modulusInv[e] < 1.0f)
+			m_ranges[e].scale /= (1.0f - m_modulusInv[e]);
+	}
+
+	T operator()()
+	{
+		T result;
+		float number = m_key;
+		m_key += 1.0f;
+		for (uint e = 0; e < Dim; ++e)
+		{
+			number *= m_modulusInv[e];
+			float fraction = frac(number);
+			result[e] = m_ranges[e](fraction);
+			number -= fraction;
+		}
+		return result;
+	}
+
+private:
+	float        m_key;
+	float        m_modulusInv[Dim];
+	Slope<float> m_ranges[Dim];
+};
+
 ///////////////////////////////////////////////////////////////////////////////
 // Implement EParticleDataTypes (size, position, etc) with DynamicEnum.
 // Data type entries can be declared in multiple source files, with info about the data type (float, Vec3, etc)
 
 enum EDataDomain
 {
-	EDD_None           = 0, // Data is per-emitter or global
+	EDD_None           = 0,      // Data is per-emitter or global
 
-	EDD_PerInstance    = 1, // Data is per sub-emitter
-	EDD_PerParticle    = 2, // Data is per particle
+	EDD_Particle       = BIT(0), // Data is per particle
+	EDD_Spawner        = BIT(1), // Data is per particle spawner
 
-	EDD_HasUpdate      = 4, // Data is updated per-frame, has additional init-value element
+	EDD_HasUpdate      = BIT(2), // Data is updated per-frame, has additional init-value element
 
-	EDD_ParticleUpdate = EDD_PerParticle | EDD_HasUpdate,
-	EDD_InstanceUpdate = EDD_PerInstance | EDD_HasUpdate
+	EDD_ParticleUpdate = EDD_Particle | EDD_HasUpdate,
+	EDD_SpawnerUpdate  = EDD_Spawner | EDD_HasUpdate
 };
+
+inline int ElementType(EDataDomain domain) { return (domain & 3) - 1; }
+
+template<typename T>
+struct ElementTypeArray: std::array<T, 2>
+{
+	using base = std::array<T, 2>;
+	const T& operator[](EDataDomain domain) const { return base::operator[](ElementType(domain)); }
+	T& operator[](EDataDomain domain) { return base::operator[](ElementType(domain)); }
+};
+
 
 // Traits for extracting element-type info from scalar and vector types
 template<typename T>
@@ -172,6 +263,27 @@ struct TDataType: EParticleDataType
 		CRY_ASSERT(this->info().domain & EDD_HasUpdate);
 		return TDataType(this->value() + Dim);
 	}
+
+	T* Cast(EParticleDataType typeIn, void* ptr) const
+	{
+		if (typeIn == *this)
+			return (T*)ptr;
+		else
+			return nullptr;
+	}
+
+	struct TVarCheckArray: TVarArray<T>
+	{
+		TVarCheckArray(TVarArray<T> in) : TVarArray<T>(in) {}
+		operator uint() const { return this->size(); }
+	};
+	TVarCheckArray Cast(EParticleDataType typeIn, void* ptr, SUpdateRange range) const
+	{
+		if (typeIn == *this)
+			return TVarArray<T>((T*)ptr - range.m_begin, range.size());
+		else
+			return TVarArray<T>();
+	}
 };
 
 
@@ -179,7 +291,7 @@ struct TDataType: EParticleDataType
 //  MakeDataType(EPDT_SpawnID, TParticleID)
 //  MakeDataType(EPVF_Velocity, Vec3)
 
-inline EDataDomain PDT_FLAGS(EDataDomain domain = EDD_PerParticle) { return domain; } // Helper function for variadic macro
+inline EDataDomain PDT_FLAGS(EDataDomain domain = EDD_Particle) { return domain; } // Helper function for variadic macro
 
 #define MakeDataType(Name, T, ...) \
   TDataType<T> Name(SkipPrefix(#Name), nullptr, SDataInfo((T*)0, PDT_FLAGS(__VA_ARGS__)))
@@ -195,27 +307,30 @@ inline cstr SkipPrefix(cstr name)
 // Store usage of particle data types
 struct SUseData
 {
-	TDynArray<uint> offsets;        // Offset of data type if used, ~0 if not
-	uint            totalSize = 0;  // Total size of data per-particle
+	TDynArray<int16>        offsets;    // Offset of data type if used, -1 if not
+	ElementTypeArray<int16> totalSizes; // Total size of data per-element data
 
 	SUseData()
-		: offsets(EParticleDataType::size(), ~0)
+		: offsets(EParticleDataType::size(), -1)
 	{
+		totalSizes.fill(0);
 	}
 	bool Used(EParticleDataType type) const
 	{
-		return offsets[type] != ~0;
+		return offsets[type] >= 0;
 	}
 	void AddData(EParticleDataType type)
 	{
 		if (!Used(type))
 		{
+			auto domain = type.info().domain;
 			uint dim = type.info().dimension;
-			uint size = Align(type.info().typeSize, 4);
+			int16 size = Align(type.info().typeSize, 4);
 			for (uint i = 0; i < dim; ++i)
 			{
-				offsets[type + i] = totalSize;
-				totalSize += size;
+				offsets[type + i] = totalSizes[domain];
+				assert(totalSizes[domain] + size > totalSizes[domain]);
+				totalSizes[domain] += size;
 			}
 		}
 	}
@@ -226,20 +341,22 @@ inline PUseData NewUseData() { return std::make_shared<SUseData>(); }
 
 struct SUseDataRef
 {
-	TConstArray<uint> offsets;
-	uint              totalSize = 0;
-	PUseData          pRefData;
+	TConstArray<int16> offsets;
+	int16              totalSize = 0;
+	EDataDomain        domain;
+	PUseData           pRefData;
 
 	SUseDataRef() 
 	{}
-	SUseDataRef(const PUseData& pUseData)
+	SUseDataRef(const PUseData& pUseData, EDataDomain domain)
 		: offsets(pUseData->offsets)
-		, totalSize(pUseData->totalSize)
+		, totalSize(pUseData->totalSizes[domain])
+		, domain(domain)
 		, pRefData(pUseData)
 	{}
 	bool Used(EParticleDataType type) const
 	{
-		return offsets[type] != ~0;
+		return type.info().domain & domain && offsets[type] >= 0;
 	}
 };
 
@@ -266,6 +383,12 @@ extern TDataType<Vec3>
 
 extern TDataType<Quat>
 	EPQF_Orientation;
+
+// Spawner data types
+extern TDataType<TParticleId>
+	ESDT_ParentId;
+extern TDataType<float>
+	ESDT_Age;
 
 // NormalAge functions
 inline bool IsAlive(float age)   { return age < 1.0f; }

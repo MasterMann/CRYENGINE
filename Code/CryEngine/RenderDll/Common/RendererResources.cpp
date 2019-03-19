@@ -3,6 +3,7 @@
 #include "StdAfx.h"
 #include <CryRenderer/IFlares.h>
 #include "RendererResources.h"
+#include "RendererCVars.h"
 #include "Renderer.h"
 #include "Textures/Texture.h"                           // CTexture
 
@@ -157,10 +158,6 @@ CTexture* CRendererResources::s_ptexFromRE[8];
 CTexture* CRendererResources::s_ptexShadowID[8];
 CTexture* CRendererResources::s_ptexShadowMask;
 CTexture* CRendererResources::s_ptexClipVolumes;
-CTexture* CRendererResources::s_ptexCachedShadowMap[MAX_GSM_LODS_NUM];
-CTexture* CRendererResources::s_ptexNearestShadowMap;
-CTexture* CRendererResources::s_ptexHeightMapAO[2];
-CTexture* CRendererResources::s_ptexHeightMapAODepth[2];
 CTexture* CRendererResources::s_ptexFromRE_FromContainer[2];
 CTexture* CRendererResources::s_ptexFromObj;
 CTexture* CRendererResources::s_ptexRT_2D;
@@ -337,9 +334,7 @@ void CRendererResources::UnloadDefaultSystemTextures(bool bFinalRelease)
 	//s_ShaderTemplates.Free();
 
 	// release targets pools
-	//SDynTexture_Shadow::ShutDown();
 	SDynTexture::ShutDown();
-	SDynTexture2::ShutDown();
 
 	//ReleaseSystemTargets();
 
@@ -358,10 +353,6 @@ void CRendererResources::LoadDefaultSystemTextures()
 	if (!m_bLoadedSystem)
 	{
 		m_bLoadedSystem = true;
-
-		const float  clearDepth   = Clr_FarPlane_Rev.r;
-		const uint8  clearStencil = Val_Stencil;
-		const ColorF clearValues  = ColorF(clearDepth, FLOAT(clearStencil), 0.f, 0.f);
 
 		// Textures loaded directly from file
 		struct
@@ -446,9 +437,8 @@ void CRendererResources::LoadDefaultSystemTextures()
 
 		s_ptexRT_2D = CTexture::GetOrCreateTextureObject("$RT_2D", 0, 0, 1, eTT_2D, FT_DONT_RELEASE | FT_DONT_STREAM | FT_USAGE_RENDERTARGET, eTF_Unknown, TO_RT_2D);
 
-		s_ptexRainOcclusion = CTexture::GetOrCreateTextureObject("$RainOcclusion", RAIN_OCC_MAP_SIZE, RAIN_OCC_MAP_SIZE, 1, eTT_2D, FT_DONT_RELEASE | FT_DONT_STREAM | FT_USAGE_RENDERTARGET, eTF_R8G8B8A8);
-		s_ptexRainSSOcclusion[0] = CTexture::GetOrCreateTextureObject("$RainSSOcclusion0", 0, 0, 1, eTT_2D, FT_DONT_RELEASE | FT_DONT_STREAM | FT_USAGE_RENDERTARGET, eTF_Unknown);
-		s_ptexRainSSOcclusion[1] = CTexture::GetOrCreateTextureObject("$RainSSOcclusion1", 0, 0, 1, eTT_2D, FT_DONT_RELEASE | FT_DONT_STREAM | FT_USAGE_RENDERTARGET, eTF_Unknown);
+		if (RainOcclusionMapsEnabled())
+			PrepareRainOcclusionMaps();
 
 		//s_ptexHitAreaRT[0] = CTexture::CreateTextureObject("$HitEffectAccumBuffRT_0", 128, 128, 1, eTT_2D, FT_DONT_RELEASE | FT_DONT_STREAM | FT_USAGE_RENDERTARGET, eTF_Unknown);
 		//s_ptexHitAreaRT[1] = CTexture::CreateTextureObject("$HitEffectAccumBuffRT_1", 128, 128, 1, eTT_2D, FT_DONT_RELEASE | FT_DONT_STREAM | FT_USAGE_RENDERTARGET, eTF_Unknown);
@@ -676,12 +666,6 @@ void CRendererResources::CreateSystemTargets(int resourceWidth, int resourceHeig
 		// Create HDR targets
 		CreateHDRMaps(resourceWidth, resourceHeight);
 
-		// Allocate cached shadow maps if required
-		CreateCachedShadowMaps();
-
-		// Allocate the nearest shadow map if required
-		CreateNearestShadowMap();
-
 		// Create post effects targets
 		CreatePostFXMaps(resourceWidth, resourceHeight);
 
@@ -713,8 +697,7 @@ void CRendererResources::ResizeSystemTargets(int renderWidth, int renderHeight)
 		resourceWidth  = renderWidth;
 		resourceHeight = renderHeight;
 #endif
-		const bool bR11G11B10FAvailable = s_hwTexFormatSupport.IsFormatSupported(eTF_R11G11B10F);
-		ETEX_Format nHDRFormat = (CRenderer::CV_r_HDRTexFormat == 0 && bR11G11B10FAvailable) ? eTF_R11G11B10F : eTF_R16G16B16A16F;
+
 		// Resize ZTarget
 		CreateDepthMaps(resourceWidth, resourceHeight);
 
@@ -742,8 +725,6 @@ void CRendererResources::DestroySystemTargets()
 		DestroyDepthMaps();
 		DestroySceneMaps();
 		DestroyHDRMaps();
-		DestroyCachedShadowMaps();
-		DestroyNearestShadowMap();
 		DestroyDeferredMaps();
 		DestroyPostFXMaps();
 
@@ -780,7 +761,6 @@ void CRendererResources::CreateDepthMaps(int resourceWidth, int resourceHeight)
 		preferredDepthFormat == eTF_D24S8  ? eTF_R32F :
 		preferredDepthFormat == eTF_D16S8  ? eTF_R16  : eTF_R16;
 
-	const uint32 nDSFlags = FT_DONT_STREAM | FT_DONT_RELEASE | FT_USAGE_DEPTHSTENCIL;
 	const uint32 nRTFlags = FT_DONT_STREAM | FT_DONT_RELEASE | FT_USAGE_RENDERTARGET;
 	uint32 nUAFlags = FT_DONT_STREAM | FT_DONT_RELEASE | FT_USAGE_RENDERTARGET | FT_USAGE_UNORDERED_ACCESS | FT_USAGE_UAV_RWTEXTURE;
 
@@ -937,34 +917,6 @@ void CRendererResources::CreateDeferredMaps(int resourceWidth, int resourceHeigh
 			s_ptexShadowMask = CTexture::GetOrCreateTextureArray("$ShadowMask", resolution.x, resolution.y, nArraySize, 1, eTT_2DArray, FT_DONT_STREAM | FT_USAGE_RENDERTARGET, eTF_R8, TO_SHADOWMASK);
 		}
 	}
-
-	// height map AO mask
-	if (CRenderer::CV_r_HeightMapAO > 0)
-	{
-		const int shift = clamp_tpl(3 - CRenderer::CV_r_HeightMapAO, 0, 2);
-
-		int hmaoWidth = resolution.x;
-		int hmaoHeight = resolution.y;
-		for (int i = 0; i < shift; i++)
-		{
-			hmaoWidth = (hmaoWidth + 1) / 2;
-			hmaoHeight = (hmaoHeight + 1) / 2;
-		}
-
-		for (int i = 0; i < 2; ++i)
-		{
-			if (s_ptexHeightMapAO[i])
-				s_ptexHeightMapAO[i]->Invalidate(hmaoWidth, hmaoHeight, eTF_R8G8);
-
-			if (!CTexture::IsTextureExist(s_ptexHeightMapAO[i]))
-			{
-				char buf[128];
-				cry_sprintf(buf, "$HeightMapAO_%d", i);
-
-				SD3DPostEffectsUtils::GetOrCreateRenderTarget(buf, s_ptexHeightMapAO[i], hmaoWidth, hmaoHeight, Clr_Neutral, true, false, eTF_R8G8);
-			}
-		}
-	}
 }
 
 void CRendererResources::DestroyDeferredMaps()
@@ -993,10 +945,6 @@ void CRendererResources::DestroyDeferredMaps()
 	SAFE_RELEASE(s_ptexRT_ShadowPool);
 	SAFE_RELEASE(s_ptexShadowMask);
 	SAFE_RELEASE(s_ptexClipVolumes);
-
-	// height map AO mask
-	SAFE_RELEASE(s_ptexHeightMapAO[0]);
-	SAFE_RELEASE(s_ptexHeightMapAO[1]);
 }
 
 //==================================================================================================
@@ -1144,13 +1092,19 @@ void CRendererResources::DestroyHDRMaps()
 bool CRendererResources::CreatePostFXMaps(int resourceWidth, int resourceHeight)
 {
 #if RENDERER_ENABLE_FULL_PIPELINE
+
+	if (RainOcclusionMapsEnabled())
+		CreateRainOcclusionMaps(resourceWidth, resourceHeight);
+
 	const int width  = resourceWidth , width_r2  = (width  + 1) / 2, width_r4  = (width_r2  + 1) / 2, width_r8  = (width_r4  + 1) / 2;
 	const int height = resourceHeight, height_r2 = (height + 1) / 2, height_r4 = (height_r2 + 1) / 2, height_r8 = (height_r4 + 1) / 2;
 	
+	CRY_DISABLE_WARN_UNUSED_VARIABLES();
 	const ETEX_Format nHDRFormat  = GetHDRFormat(false, false); // No alpha, default is HiQ, can be downgraded
-	const ETEX_Format nHDRQFormat = GetHDRFormat(false, true ); // No alpha, default is LoQ, can be upgraded
 	const ETEX_Format nHDRAFormat = GetHDRFormat(true , false); // With alpha
+	const ETEX_Format nHDRQFormat = GetHDRFormat(false, true ); // No alpha, default is LoQ, can be upgraded
 	const ETEX_Format nLDRPFormat = GetLDRFormat(true);         // With more than 8 mantissa bits for calculations
+	CRY_RESTORE_WARN_UNUSED_VARIABLES();
 
 	if (!s_ptexDisplayTargetSrc ||
 		s_ptexDisplayTargetSrc->GetWidth() != width ||
@@ -1180,9 +1134,6 @@ bool CRendererResources::CreatePostFXMaps(int resourceWidth, int resourceHeight)
 
 		//	s_ptexWaterVolumeRefl[0]->DisableMgpuSync();
 		//	s_ptexWaterVolumeRefl[1]->DisableMgpuSync();
-
-		SPostEffectsUtils::GetOrCreateRenderTarget("$RainSSOcclusion0", s_ptexRainSSOcclusion[0], width_r8, height_r8, Clr_Unknown, 1, false, eTF_R8);
-		SPostEffectsUtils::GetOrCreateRenderTarget("$RainSSOcclusion1", s_ptexRainSSOcclusion[1], width_r8, height_r8, Clr_Unknown, 1, false, eTF_R8);
 		
 #if defined(VOLUMETRIC_FOG_SHADOWS)
 		int fogShadowBufDiv = (CRenderer::CV_r_FogShadows == 2) ? 4 : 2;
@@ -1205,9 +1156,6 @@ bool CRendererResources::CreatePostFXMaps(int resourceWidth, int resourceHeight)
 	 *	The following textures do not need to be recreated on resize
 	 */
 
-	if (!CTexture::IsTextureExist(s_ptexRainOcclusion))
-		SPostEffectsUtils::GetOrCreateRenderTarget("$RainOcclusion", s_ptexRainOcclusion, RAIN_OCC_MAP_SIZE, RAIN_OCC_MAP_SIZE, Clr_Neutral, false, false, eTF_R8, -1, FT_DONT_RELEASE);
-
 	if (!CTexture::IsTextureExist(s_ptexWaterVolumeDDN))
 	{
 		SPostEffectsUtils::GetOrCreateRenderTarget("$WaterVolumeDDN", s_ptexWaterVolumeDDN, 64, 64, Clr_Unknown, 1, true, eTF_R16G16B16A16F, TO_WATERVOLUMEMAP);
@@ -1220,6 +1168,8 @@ bool CRendererResources::CreatePostFXMaps(int resourceWidth, int resourceHeight)
 
 void CRendererResources::DestroyPostFXMaps()
 {
+	DestroyRainOcclusionMaps();
+
 	SAFE_RELEASE_FORCE(s_ptexDisplayTargetSrc);
 	SAFE_RELEASE_FORCE(s_ptexDisplayTargetDst);
 	SAFE_RELEASE_FORCE(s_ptexDisplayTargetScaled[0]);
@@ -1236,10 +1186,6 @@ void CRendererResources::DestroyPostFXMaps()
 	SAFE_RELEASE_FORCE(s_ptexCached3DHud);
 	SAFE_RELEASE_FORCE(s_ptexCached3DHudScaled);
 
-	SAFE_RELEASE(s_ptexRainSSOcclusion[0]);
-	SAFE_RELEASE(s_ptexRainSSOcclusion[1]);
-	SAFE_RELEASE_FORCE(s_ptexRainOcclusion);
-
 #if defined(VOLUMETRIC_FOG_SHADOWS)
 	SAFE_RELEASE(s_ptexVolFogShadowBuf[0]);
 	SAFE_RELEASE(s_ptexVolFogShadowBuf[1]);
@@ -1251,127 +1197,60 @@ void CRendererResources::DestroyPostFXMaps()
 	SAFE_RELEASE_FORCE(s_ptexFlaresGather);
 }
 
-//==================================================================================================
-
-void CRendererResources::CreateCachedShadowMaps()
+void CRendererResources::PrepareRainOcclusionMaps()
 {
-	StaticArray<int, MAX_GSM_LODS_NUM> nResolutions = gRenDev->GetCachedShadowsResolution();
-
-	// parse shadow resolutions from cvar
+	if (!s_ptexRainOcclusion)
 	{
-		int nCurPos = 0;
-		int nCurRes = 0;
-
-		string strResolutions = gEnv->pConsole->GetCVar("r_ShadowsCacheResolutions")->GetString();
-		string strCurRes = strResolutions.Tokenize(" ,;-\t", nCurPos);
-
-		if (!strCurRes.empty())
-		{
-			nResolutions.fill(0);
-
-			while (!strCurRes.empty())
-			{
-				int nRes = atoi(strCurRes.c_str());
-				nResolutions[nCurRes] = clamp_tpl(nRes, 0, 16384);
-
-				strCurRes = strResolutions.Tokenize(" ,;-\t", nCurPos);
-				++nCurRes;
-			}
-
-			gRenDev->SetCachedShadowsResolution(nResolutions);
-		}
-	}
-
-	const ETEX_Format texFormat = CRendererCVars::CV_r_ShadowsCacheFormat == 0 ? eTF_D32F : eTF_D16;
-	const int cachedShadowsStart = clamp_tpl(CRendererCVars::CV_r_ShadowsCache, 0, MAX_GSM_LODS_NUM - 1);
-
-	int gsmCascadeCount = gEnv->pSystem->GetConfigSpec() == CONFIG_LOW_SPEC ? 4 : 5;
-	if (ICVar* pGsmLodsVar = gEnv->pConsole->GetCVar("e_GsmLodsNum"))
-		gsmCascadeCount = pGsmLodsVar->GetIVal();
-	const int cachedCascadesCount = cachedShadowsStart > 0 ? clamp_tpl(gsmCascadeCount - cachedShadowsStart + 1, 0, MAX_GSM_LODS_NUM) : 0;
-
-	for (int i = 0; i < MAX_GSM_LODS_NUM; ++i)
-	{
-		CTexture*& pTx = s_ptexCachedShadowMap[i];
-
-		if (!pTx)
-		{
-			char szName[32];
-			cry_sprintf(szName, "CachedShadowMap_%d", i);
-
-			pTx = CTexture::GetOrCreateTextureObject(szName, nResolutions[i], nResolutions[i], 1, eTT_2D, FT_DONT_RELEASE | FT_DONT_STREAM | FT_USAGE_DEPTHSTENCIL, texFormat);
-		}
-
-		pTx->Invalidate(nResolutions[i], nResolutions[i], texFormat);
-
-		// delete existing texture in case it's not needed anymore
-		if (CTexture::IsTextureExist(pTx) && nResolutions[i] == 0)
-			pTx->ReleaseDeviceTexture(false);
-
-		// allocate texture directly for all cached cascades
-		if (!CTexture::IsTextureExist(pTx) && nResolutions[i] > 0 && i < cachedCascadesCount)
-		{
-			CryLog("Allocating shadow map cache %d x %d: %.2f MB", nResolutions[i], nResolutions[i], sqr(nResolutions[i]) * CTexture::BitsPerPixel(texFormat) / (1024.f * 1024.f * 8.f));
-			pTx->CreateDepthStencil(texFormat, ColorF(1.0f, 1.0f, 1.0f, 1.0f));
-		}
-	}
-
-	// height map AO
-	if (CRendererCVars::CV_r_HeightMapAO)
-	{
-		const int nTexRes = (int)clamp_tpl(CRendererCVars::CV_r_HeightMapAOResolution, 0.f, 16384.f);
-		ETEX_Format texFormatMips = texFormat == eTF_D32F ? eTF_R32F : eTF_R16;
-		// Allow non-supported SNORM/UNORM to fall back to a FLOAT format with slightly less precision
-		texFormatMips = CRendererResources::s_hwTexFormatSupport.GetLessPreciseFormatSupported(texFormatMips);
-
-		if (!s_ptexHeightMapAODepth[0])
-		{
-			s_ptexHeightMapAODepth[0] = CTexture::GetOrCreateTextureObject("HeightMapAO_Depth_0", nTexRes, nTexRes, 1, eTT_2D, FT_DONT_RELEASE | FT_DONT_STREAM | FT_USAGE_DEPTHSTENCIL, texFormat);
-			s_ptexHeightMapAODepth[1] = CTexture::GetOrCreateTextureObject("HeightMapAO_Depth_1", nTexRes, nTexRes, 1, eTT_2D, FT_DONT_RELEASE | FT_DONT_STREAM | FT_USAGE_RENDERTARGET | FT_FORCE_MIPS, texFormatMips);
-		}
-
-		s_ptexHeightMapAODepth[0]->Invalidate(nTexRes, nTexRes, texFormat);
-		s_ptexHeightMapAODepth[1]->Invalidate(nTexRes, nTexRes, texFormatMips);
-
-		if (!CTexture::IsTextureExist(s_ptexHeightMapAODepth[0]) && nTexRes > 0)
-		{
-			s_ptexHeightMapAODepth[0]->CreateDepthStencil(texFormat    , ColorF(1.0f, 1.0f, 1.0f, 1.0f));
-			s_ptexHeightMapAODepth[1]->CreateRenderTarget(texFormatMips, ColorF(1.0f, 1.0f, 1.0f, 1.0f));
-		}
-	}
-
-	if (ShadowFrustumMGPUCache* pShadowMGPUCache = gRenDev->GetShadowFrustumMGPUCache())
-	{
-		pShadowMGPUCache->nUpdateMaskRT = 0;
-		pShadowMGPUCache->nUpdateMaskMT = 0;
+		s_ptexRainOcclusion = CTexture::GetOrCreateTextureObject("$RainOcclusion", RAIN_OCC_MAP_SIZE, RAIN_OCC_MAP_SIZE, 1, eTT_2D, FT_DONT_RELEASE | FT_DONT_STREAM | FT_USAGE_RENDERTARGET, eTF_R8G8B8A8);
+		s_ptexRainSSOcclusion[0] = CTexture::GetOrCreateTextureObject("$RainSSOcclusion0", 0, 0, 1, eTT_2D, FT_DONT_RELEASE | FT_DONT_STREAM | FT_USAGE_RENDERTARGET, eTF_Unknown);
+		s_ptexRainSSOcclusion[1] = CTexture::GetOrCreateTextureObject("$RainSSOcclusion1", 0, 0, 1, eTT_2D, FT_DONT_RELEASE | FT_DONT_STREAM | FT_USAGE_RENDERTARGET, eTF_Unknown);
 	}
 }
 
-void CRendererResources::DestroyCachedShadowMaps()
+void CRendererResources::CreateRainOcclusionMaps(int resourceWidth, int resourceHeight)
 {
-	for (int i = 0; i < MAX_GSM_LODS_NUM; ++i)
+	PrepareRainOcclusionMaps();
+
+	if (!CTexture::IsTextureExist(s_ptexRainOcclusion))
+		SPostEffectsUtils::GetOrCreateRenderTarget("$RainOcclusion", s_ptexRainOcclusion, RAIN_OCC_MAP_SIZE, RAIN_OCC_MAP_SIZE, Clr_Neutral, false, false, eTF_R8, -1, FT_DONT_RELEASE);
+
+	const int width_r8 = (resourceWidth + 7) / 8;
+	const int height_r8 = (resourceHeight + 7) / 8;
+
+	if (!s_ptexRainSSOcclusion[0] ||
+		s_ptexRainSSOcclusion[0]->GetWidth() != width_r8 ||
+		s_ptexRainSSOcclusion[0]->GetHeight() != height_r8)
 	{
-		SAFE_RELEASE_FORCE(s_ptexCachedShadowMap[i]);
+		SPostEffectsUtils::GetOrCreateRenderTarget("$RainSSOcclusion0", s_ptexRainSSOcclusion[0], width_r8, height_r8, Clr_Unknown, 1, false, eTF_R8);
+		SPostEffectsUtils::GetOrCreateRenderTarget("$RainSSOcclusion1", s_ptexRainSSOcclusion[1], width_r8, height_r8, Clr_Unknown, 1, false, eTF_R8);
 	}
-
-	SAFE_RELEASE_FORCE(s_ptexHeightMapAODepth[0]);
-	SAFE_RELEASE_FORCE(s_ptexHeightMapAODepth[1]);
 }
 
-//==================================================================================================
-
-void CRendererResources::CreateNearestShadowMap()
+void CRendererResources::DestroyRainOcclusionMaps()
 {
-	const int texResolution = CRendererCVars::CV_r_ShadowsNearestMapResolution;
-	const ETEX_Format texFormat = CRendererCVars::CV_r_shadowtexformat == 0 ? eTF_D32F : eTF_D16;
-
-	s_ptexNearestShadowMap = CTexture::GetOrCreateTextureObject("NearestShadowMap", texResolution, texResolution, 1, eTT_2D, FT_DONT_RELEASE | FT_DONT_STREAM | FT_USAGE_DEPTHSTENCIL, texFormat);
+	SAFE_RELEASE_FORCE(s_ptexRainOcclusion);
+	SAFE_RELEASE(s_ptexRainSSOcclusion[0]);
+	SAFE_RELEASE(s_ptexRainSSOcclusion[1]);
 }
 
-void CRendererResources::DestroyNearestShadowMap()
+void CRendererResources::OnCVarsChanged(const CCVarUpdateRecorder& rCVarRecs)
 {
-	SAFE_RELEASE_FORCE(s_ptexNearestShadowMap);
+	const bool enabled = RainOcclusionMapsEnabled();
+	if (enabled != RainOcclusionMapsInitialized())
+	{
+		if (enabled)
+			CreateRainOcclusionMaps(s_resourceWidth, s_resourceHeight);
+		else
+			DestroyRainOcclusionMaps();
+	}
 }
+
+bool CRendererResources::RainOcclusionMapsEnabled()
+{
+	return CRendererCVars::IsRainEnabled() || CRendererCVars::IsSnowEnabled();
+}
+
+
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -1487,6 +1366,18 @@ void CRendererResources::ShutDown()
 	SAFE_DELETE(s_pTexNULL);
 }
 
+void CRendererResources::Update(EShaderRenderingFlags renderingFlags)
+{
+	CD3D9Renderer* const RESTRICT_POINTER rd = gcpRendD3D;
+	const auto shouldApplyOcclusion = rd->m_bDeferredRainOcclusionEnabled && CRendererCVars::IsRainEnabled();
+
+	// Create/release the occlusion texture on demand
+	if (!shouldApplyOcclusion && CTexture::IsTextureExist(s_ptexRainOcclusion))
+		s_ptexRainOcclusion->ReleaseDeviceTexture(false);
+	else if (shouldApplyOcclusion && !CTexture::IsTextureExist(s_ptexRainOcclusion))
+		s_ptexRainOcclusion->CreateRenderTarget(eTF_R8, Clr_Neutral);
+}
+
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -1526,7 +1417,6 @@ Ang3 sDeltAngles(Ang3& Ang0, Ang3& Ang1)
 
 SEnvTexture* CRendererResources::FindSuitableEnvTex(Vec3& Pos, Ang3& Angs, bool bMustExist, int RendFlags, bool bUseExistingREs, CShader* pSH, CShaderResources* pRes, CRenderObject* pObj, bool bReflect, CRenderElement* pRE, bool* bMustUpdate, const SRenderingPassInfo* pPassInfo)
 {
-	SEnvTexture* cm = NULL;
 	float time0 = iTimer->GetAsyncCurTime();
 
 	int i;

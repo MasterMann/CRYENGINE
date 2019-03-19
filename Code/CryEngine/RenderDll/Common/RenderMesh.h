@@ -1,23 +1,13 @@
 // Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
-// -------------------------------------------------------------------------
-//  File name:   RenderMesh.h
-//  Version:     v1.00
-//  Created:     01/07/2009 by Andrey Honich.
-//  Description:
-// -------------------------------------------------------------------------
-//  History:
-//
-////////////////////////////////////////////////////////////////////////////
-
-#ifndef __RENDERMESH_H__
-#define __RENDERMESH_H__
+#pragma once
 
 #include <CryCore/Containers/intrusive_list.hpp>
 #include <CryMemory/CryPool/PoolAlloc.h>
 #include <CryCore/Containers/VectorMap.h>
 #include <CryCore/Containers/VectorSet.h>
 #include <CryMath/GeomQuery.h>
+#include <3rdParty/concqueue/concqueue-mpsc.hpp>
 #include <CryThreading/IJobManager.h>
 
 #include "ComputeSkinningStorage.h"
@@ -380,7 +370,6 @@ public:
   void UnlockIB();
 
   bool RT_CheckUpdate(CRenderMesh *pVContainer, InputLayoutHandle eVF, uint32 nStreamMask, bool bTessellation = false);
-  void RT_SetMeshCleanup();
   void RT_AllocationFailure(const char* sPurpose, uint32 nSize);
 
   void AssignChunk(CRenderChunk *pChunk, class CREMeshImpl *pRE);
@@ -390,7 +379,6 @@ public:
   void FreeIB();
   void FreeDeviceBuffers(bool bRestoreSys);
   void FreeSystemBuffers();
-  void FreePreallocatedData();
 
 	bool SyncAsyncUpdate(int threadId, bool block = true);
 	void MarkRenderElementsDirty();
@@ -486,7 +474,7 @@ public:
 	virtual int GetAllocatedBytes(bool bVideoMem) const final;
 
 	virtual void SetBBox(const Vec3& vBoxMin, const Vec3& vBoxMax) final { m_vBoxMin = vBoxMin; m_vBoxMax = vBoxMax; }
-	virtual void GetBBox(Vec3& vBoxMin, Vec3& vBoxMax) final             { vBoxMin = m_vBoxMin; vBoxMax = m_vBoxMax; };
+	virtual void GetBBox(Vec3& vBoxMin, Vec3& vBoxMax) final             { vBoxMin = m_vBoxMin; vBoxMax = m_vBoxMax; }
 	virtual void UpdateBBoxFromMesh() final;
 
   // Debug draw this render mesh.
@@ -537,7 +525,10 @@ public:
 	static util::list<CRenderMesh> s_MeshGarbageList[MAX_RELEASED_MESH_FRAMES];
 	static util::list<CRenderMesh> s_MeshDirtyList[2];
 	static util::list<CRenderMesh> s_MeshModifiedList[2];
-
+	
+	// this queue is used when RENDERMESH_BUFFER_ENABLE_DIRECT_ACCESS is off to clean up the mesh pool allocations after the data is uploaded
+	static concqueue::mpsc_queue_t<void*> s_FreeableMeshDataList; 
+	
 	TRenderChunkArray              m_Chunks;
 	TRenderChunkArray              m_ChunksSubObjects; // Chunks of sub-objects.
 	TRenderChunkArray              m_ChunksSkinned;
@@ -656,5 +647,3 @@ public:
 	void* m_IData;
 	int32 m_nInds;
 };
-
-#endif // __RenderMesh2_h__

@@ -82,14 +82,14 @@ const char* CLightEntity::GetName(void) const
 	return GetOwnerEntity() ? GetOwnerEntity()->GetName() : (m_light.m_sName ? m_light.m_sName : "LightEntity");
 }
 
-void CLightEntity::GetLocalBounds(AABB& bbox)
+void CLightEntity::GetLocalBounds(AABB& bbox) const
 {
 	bbox = m_WSBBox;
 	bbox.min -= m_light.m_Origin;
 	bbox.max -= m_light.m_Origin;
 }
 
-bool CLightEntity::IsLightAreasVisible()
+bool CLightEntity::IsLightAreasVisible() const
 {
 	IVisArea* pArea = GetEntityVisArea();
 
@@ -648,7 +648,6 @@ void CLightEntity::InitShadowFrustum_SUN_Conserv(ShadowMapFrustum* pFr, int dwAl
 
 	//if(pFr->isUpdateRequested(-1))
 	pFr->vProjTranslation = passInfo.GetCamera().GetPosition() + fDistance * vViewDir;
-	;
 
 	// local jitter amount depends on frustum size
 	pFr->fFrustrumSize = 1.0f / (fGSMBoxSize * (float)Get3DEngine()->m_fGsmRange);
@@ -1303,7 +1302,6 @@ bool CLightEntity::CheckFrustumsIntersect(CLightEntity* lightEnt)
 		{
 			CCamera shadowFrust1 = pFr1->FrustumPlanes[nS1];
 			CCamera shadowFrust2 = pFr2->FrustumPlanes[nS2];
-			;
 
 			if (FrustumIntersection(shadowFrust1, shadowFrust2))
 			{
@@ -1758,7 +1756,7 @@ void CLightEntity::SetupShadowFrustumCamera_OMNI(ShadowMapFrustum* pFr, int dwAl
 	}
 }
 
-ShadowMapFrustum* CLightEntity::GetShadowFrustum(int nId)
+ShadowMapFrustum* CLightEntity::GetShadowFrustum(int nId) const
 {
 	if (m_pShadowMapInfo && nId < MAX_GSM_LODS_NUM)
 		return m_pShadowMapInfo->pGSM[nId];
@@ -1811,6 +1809,8 @@ void CLightEntity::UpdateCastShadowFlag(float fDistance, const SRenderingPassInf
 
 void CLightEntity::Render(const SRendParams& rParams, const SRenderingPassInfo& passInfo)
 {
+	FUNCTION_PROFILER_3DENGINE;
+
 	DBG_LOCK_TO_THREAD(this);
 
 #if defined(FEATURE_SVO_GI)
@@ -1842,8 +1842,6 @@ void CLightEntity::Render(const SRendParams& rParams, const SRenderingPassInfo& 
 	}
 
 	UpdateCastShadowFlag(rParams.fDistance, passInfo);
-
-	FUNCTION_PROFILER_3DENGINE;
 
 	int nRenderNodeMinSpec = (m_dwRndFlags & ERF_SPEC_BITS_MASK) >> ERF_SPEC_BITS_SHIFT;
 	if (!CheckMinSpec(nRenderNodeMinSpec))
@@ -1986,6 +1984,7 @@ void CLightEntity::Render(const SRendParams& rParams, const SRenderingPassInfo& 
 
 	bool bAdded = false;
 
+	// TODO: make it threadsafe and add it to e_ExecuteRenderAsJobMask
 	//3dengine side - lightID assigning
 	m_light.m_Id = int16(Get3DEngine()->GetDynamicLightSources()->Count() + passInfo.GetIRenderView()->GetLightsCount(eDLT_DeferredLight));
 
@@ -2003,12 +2002,23 @@ void CLightEntity::Render(const SRendParams& rParams, const SRenderingPassInfo& 
 
 		if (GetCVars()->e_DynamicLights && m_fWSMaxViewDist)
 		{
-			if (GetCVars()->e_DynamicLights == 2)
+			SRenderLight* pL = &m_light;
+			const bool isEnvProbe = (pL->m_Flags & DLF_DEFERRED_CUBEMAPS) != 0;
+			if (GetCVars()->e_DynamicLights == 2 && !isEnvProbe)
 			{
-				SRenderLight* pL = &m_light;
 				float fSize = 0.05f * (sinf(GetCurTimeSec() * 10.f) + 2.0f);
 				DrawSphere(pL->m_Origin, fSize, pL->m_Color);
-				IRenderAuxText::DrawLabelF(pL->m_Origin, 1.3f, "id=%d, rad=%.1f, vdr=%d", pL->m_Id, pL->m_fRadius, (int)m_ucViewDistRatio);
+				{
+					IRenderAuxText::DrawLabelF(pL->m_Origin, 1.3f, "id=%d, rad=%.1f, vdr=%d", pL->m_Id, pL->m_fRadius, (int)m_ucViewDistRatio);
+				}
+			}
+			else if (GetCVars()->e_DynamicLights == 3 && isEnvProbe)
+			{
+				float fSize = 0.05f * (sinf(GetCurTimeSec() * 10.f) + 2.0f);
+				DrawSphere(pL->m_Origin, fSize, pL->m_Color);
+				{
+					IRenderAuxText::DrawLabelF(pL->m_Origin, 1.3f, "id=%d, rad=%.1f, vdr=%d", pL->m_Id, pL->m_fRadius, (int)m_ucViewDistRatio);
+				}
 			}
 
 			const float mult = SATURATE(6.f * (1.f - (rParams.fDistance / m_fWSMaxViewDist)));
@@ -2102,8 +2112,7 @@ void CLightEntity::ProcessPerObjectFrustum(ShadowMapFrustum* pFr, struct SPerObj
 	COctreeNode::SetTraversalFrameId((IRenderNode*)pPerObjectShadow->pCaster, passInfo.GetMainFrameID(), ~0);
 
 	// get caster's bounding box and scale
-	AABB objectBBox;
-	pPerObjectShadow->pCaster->FillBBox(objectBBox);
+	const AABB objectBBox = pPerObjectShadow->pCaster->GetBBox();
 	Vec3 vExtents = 0.5f * objectBBox.GetSize().CompMul(pPerObjectShadow->vBBoxScale);
 	pFr->aabbCasters = AABB(objectBBox.GetCenter() - vExtents, objectBBox.GetCenter() + vExtents);
 
@@ -2144,17 +2153,7 @@ void CLightEntity::ProcessPerObjectFrustum(ShadowMapFrustum* pFr, struct SPerObj
 	}
 }
 
-void CLightEntity::FillBBox(AABB& aabb)
-{
-	aabb = CLightEntity::GetBBox();
-}
-
-EERType CLightEntity::GetRenderNodeType()
-{
-	return eERType_Light;
-}
-
-float CLightEntity::GetMaxViewDist()
+float CLightEntity::GetMaxViewDist() const
 {
 	if (m_light.m_Flags & DLF_SUN)
 		return 10.f * DISTANCE_TO_THE_SUN;

@@ -65,6 +65,7 @@ enum ERNListType
 	eRNListType_Brush,
 	eRNListType_Vegetation,
 	eRNListType_DecalsAndRoads,
+	eRNListType_Light,
 	eRNListType_ListsNum,
 
 	//! This should be the last member.
@@ -198,13 +199,16 @@ enum ERenderNodeFlags : uint64
 	ERF_HUD_REQUIRE_DEPTHTEST         = BIT64(37), //!< If 3D HUD Object requires to be rendered at correct depth (i.e. behind weapon)
 
 	ERF_MOVES_EVERY_FRAME             = BIT64(38), //!< Set on Render Nodes that are highly dynamic, for optimization reasons
+	ERF_NO_3DENGINE_REGISTRATION      = BIT64(39), //!< Prevents render nodes from being registered in the 3DEngine octree (currently only supported by CBrush and CCharacterRenderNode)
 
 	// Special additional flags that are set on CRenderObject flags
-	ERF_FOB_RENDER_AFTER_POSTPROCESSING = BIT64(39), //!< Set FOB_RENDER_AFTER_POSTPROCESSING on the CRenderObject flags
-	ERF_FOB_NEAREST                     = BIT64(40), //!< Set FOB_NEAREST on the CRenderObject flags
-	ERF_PENDING_DELETE                  = BIT64(41),
-	ERF_FOB_ALLOW_TERRAIN_LAYER_BLEND   = BIT64(42), //!< Set FOB_ALLOW_TERRAIN_LAYER_BLEND on the the CRenderObject flags
-	ERF_FOB_ALLOW_DECAL_BLEND           = BIT64(43), //!< Set FOB_ALLOW_DECAL_BLEND on the the CRenderObject flags
+	ERF_FOB_RENDER_AFTER_POSTPROCESSING = BIT64(40), //!< Set FOB_RENDER_AFTER_POSTPROCESSING on the CRenderObject flags
+	ERF_FOB_NEAREST                     = BIT64(41), //!< Set FOB_NEAREST on the CRenderObject flags
+	ERF_PENDING_DELETE                  = BIT64(42),
+	ERF_FOB_ALLOW_TERRAIN_LAYER_BLEND   = BIT64(43), //!< Set FOB_ALLOW_TERRAIN_LAYER_BLEND on the the CRenderObject flags
+	ERF_FOB_ALLOW_DECAL_BLEND           = BIT64(44), //!< Set FOB_ALLOW_DECAL_BLEND on the the CRenderObject flags
+	ERF_HIDDEN_FROM_RECURSION           = BIT64(45), //!< Don't render object in recursive passes (currently only supported by CBrush and CCharacterRenderNode)
+	ERF_HIDDEN_FROM_CAMERA              = BIT64(46), //!< Don't render object in camera passes (currently only supported by CBrush and CCharacterRenderNode)
 };
 
 #define ERF_SPEC_BITS_MASK    (ERF_SPEC_BIT0 | ERF_SPEC_BIT1 | ERF_SPEC_BIT2)
@@ -220,10 +224,10 @@ struct IShadowCaster
 	virtual bool                       HasOcclusionmap(int nLod, IRenderNode* pLightOwner)           { return false; }
 	virtual CLodValue                  ComputeLod(int wantedLod, const SRenderingPassInfo& passInfo) { return CLodValue(wantedLod); }
 	virtual void                       Render(const SRendParams& RendParams, const SRenderingPassInfo& passInfo) = 0;
-	virtual const AABB                 GetBBoxVirtual() = 0;
-	virtual void                       FillBBox(AABB& aabb) = 0;
+	virtual const AABB                 GetBBox() const = 0;
+	virtual void                       FillBBox(AABB& aabb) const = 0;
 	virtual struct ICharacterInstance* GetEntityCharacter(Matrix34A* pMatrix = NULL, bool bReturnOnlyVisible = false) = 0;
-	virtual EERType                    GetRenderNodeType() = 0;
+	virtual EERType                    GetRenderNodeType() const = 0;
 	// </interfuscator:shuffle>
 
 	//! Internal states to track shadow cache status
@@ -302,7 +306,7 @@ public:
 		ZeroArray(m_shadowCacheLastRendered);
 	}
 
-	virtual bool CanExecuteRenderAsJob() { return false; }
+	virtual bool CanExecuteRenderAsJob() const { return false; }
 
 	// <interfuscator:shuffle>
 
@@ -321,11 +325,11 @@ public:
 	virtual void SetMatrix(const Matrix34& mat) {}
 
 	//! Gets local bounds of the render node.
-	virtual void       GetLocalBounds(AABB& bbox) { AABB WSBBox(GetBBox()); bbox = AABB(WSBBox.min - GetPos(true), WSBBox.max - GetPos(true)); }
+	virtual void       GetLocalBounds(AABB& bbox) const { AABB WSBBox(GetBBox()); bbox = AABB(WSBBox.min - GetPos(true), WSBBox.max - GetPos(true)); }
 
 	virtual Vec3       GetPos(bool bWorldOnly = true) const = 0;
 	virtual const AABB GetBBox() const = 0;
-	virtual void       FillBBox(AABB& aabb) { aabb = GetBBox(); }
+	virtual void       FillBBox(AABB& aabb) const { aabb = GetBBox(); }
 	virtual void       SetBBox(const AABB& WSBBox) = 0;
 
 	//! Changes the world coordinates position of this node by delta.
@@ -350,7 +354,7 @@ public:
 #endif
 
 	//! \return IRenderMesh of the object.
-	virtual struct IRenderMesh* GetRenderMesh(int nLod) { return 0; }
+	virtual struct IRenderMesh* GetRenderMesh(int nLod) const { return 0; }
 
 	//! Allows to adjust default lod distance settings.
 	//! If fLodRatio is 100 - default lod distance is used.
@@ -386,7 +390,7 @@ public:
 
 	//! Queries override material of this instance.
 	virtual IMaterial* GetMaterial(Vec3* pHitPos = NULL) const = 0;
-	virtual IMaterial* GetMaterialOverride() = 0;
+	virtual IMaterial* GetMaterialOverride() const = 0;
 
 	//! Used by the editor during export.
 	virtual void       SetCollisionClassIndex(int tableIndex)          {}
@@ -394,10 +398,10 @@ public:
 	virtual void       SetStatObjGroupIndex(int nVegetationGroupIndex) {}
 	virtual int        GetStatObjGroupId() const                       { return -1; }
 	virtual void       SetLayerId(uint16 nLayerId)                     {}
-	virtual uint16     GetLayerId()                                    { return 0; }
-	virtual float      GetMaxViewDist() = 0;
+	virtual uint16     GetLayerId() const                              { return 0; }
+	virtual float      GetMaxViewDist() const = 0;
 
-	virtual EERType    GetRenderNodeType() = 0;
+	virtual EERType    GetRenderNodeType() const = 0;
 	virtual bool       IsAllocatedOutsideOf3DEngineDLL()             { return GetOwnerEntity() != nullptr; }
 	virtual void       Dephysicalize(bool bKeepIfReferenced = false) {}
 	virtual void       Dematerialize()                               {}
@@ -406,8 +410,6 @@ public:
 	virtual void       Precache()                                                                       {}
 
 	virtual void       UpdateStreamingPriority(const SUpdateStreamingPriorityContext& streamingContext) {}
-
-	virtual const AABB GetBBoxVirtual()                                                                 { return GetBBox(); }
 
 	//	virtual float GetLodForDistance(float fDistance) { return 0; }
 
@@ -430,7 +432,7 @@ public:
 		}
 	}
 
-	virtual uint8 GetSortPriority()                        { return 0; }
+	virtual uint8 GetSortPriority() const { return 0; }
 
 	//! Object can be used by GI system in several ways.
 	enum EGIMode
@@ -555,6 +557,8 @@ public:
 		case eERType_Decal:
 		case eERType_Road:
 			return eRNListType_DecalsAndRoads;
+		case eERType_Light:
+			return eRNListType_Light;
 		default:
 			return eRNListType_Unknown;
 		}
@@ -736,9 +740,10 @@ struct ILightSource : public IRenderNode
 	// <interfuscator:shuffle>
 	virtual void                     SetLightProperties(const SRenderLight& light) = 0;
 	virtual SRenderLight&            GetLightProperties() = 0;
-	virtual const Matrix34&          GetMatrix() = 0;
-	virtual struct ShadowMapFrustum* GetShadowFrustum(int nId = 0) = 0;
-	virtual bool                     IsLightAreasVisible() = 0;
+	virtual const SRenderLight&      GetLightProperties() const = 0;
+	virtual const Matrix34&          GetMatrix() const = 0;
+	virtual struct ShadowMapFrustum* GetShadowFrustum(int nId = 0) const = 0;
+	virtual bool                     IsLightAreasVisible() const = 0;
 	virtual void                     SetCastingException(IRenderNode* pNotCaster) = 0;
 	// </interfuscator:shuffle>
 };
@@ -908,8 +913,8 @@ struct IDecalRenderNode : public IRenderNode
 	// <interfuscator:shuffle>
 	virtual void                    SetDecalProperties(const SDecalProperties& properties) = 0;
 	virtual const SDecalProperties* GetDecalProperties() const = 0;
-	virtual const Matrix34& GetMatrix() = 0;
-	virtual void            CleanUpOldDecals() = 0;
+	virtual const Matrix34&         GetMatrix() const = 0;
+	virtual void                    CleanUpOldDecals() = 0;
 	// </interfuscator:shuffle>
 };
 

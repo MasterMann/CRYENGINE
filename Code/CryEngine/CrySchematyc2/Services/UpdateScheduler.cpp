@@ -19,6 +19,7 @@ namespace Schematyc2
 	namespace
 	{
 		static const size_t s_defaultBucketSize      = 128;
+		static const size_t s_gridCellReserveSize    = 0;
 	}
 
 	////////////////////////////////////////////////////////////////
@@ -41,6 +42,8 @@ namespace Schematyc2
 	////////////////////////////////////////////////////////////////
 	void CRelevanceGrid::Construct()
 	{
+		MEMSTAT_CONTEXT(EMemStatContextTypes::MSC_Other, 0, "Schematyc2::CRelevanceGrid::Construct");
+
 		const float terrainSize = static_cast<float>(gEnv->p3DEngine->GetTerrainSize());
 
 		m_gridSize = int(terrainSize / CVars::sc_RelevanceGridCellSize);
@@ -52,10 +55,13 @@ namespace Schematyc2
 		m_grid.clear();
 
 		m_grid.resize(m_gridSize * m_gridSize);
-		for (SGridCell& cell : m_grid)
+		if (s_gridCellReserveSize > 0)
 		{
-			cell.globalUpdateCallbacks.reserve(16);
-			cell.localGridUpdateCallbacks.reserve(16);
+			for (SGridCell& cell : m_grid)
+			{
+				cell.globalUpdateCallbacks.reserve(s_gridCellReserveSize);
+				cell.localGridUpdateCallbacks.reserve(s_gridCellReserveSize);
+			}
 		}
 	}
 
@@ -502,7 +508,7 @@ namespace Schematyc2
 		ti.color[1] = textColor.rgba[1];
 		ti.color[2] = textColor.rgba[2];
 		ti.color[3] = textColor.rgba[3];
-		ti.flags = eDrawText_FixedSize | eDrawText_Center | eDrawText_800x600;
+		ti.flags = eDrawText_FixedSize | eDrawText_Center;
 		ti.scale = IRenderAuxText::ASize(1.25f).val;
 
 		auto printCallback = [](const SUpdateCallback& callback, string& textBuf)
@@ -517,8 +523,15 @@ namespace Schematyc2
 			}
 		};
 
-		const bool isDrawAllCells = CVars::sc_RelevanceGridDebugStatic > 1;
-		const bool isPrintExtraInfo = CVars::sc_RelevanceGridDebugStatic > 2;
+		const bool isDrawAllCells = (CVars::sc_RelevanceGridDebugStatic & 2) != 0;
+		const bool isPrintExtraInfo = (CVars::sc_RelevanceGridDebugStatic & 4) != 0;
+		const bool isLogMemoryStats = (CVars::sc_RelevanceGridDebugStatic & 8) != 0;
+		CVars::sc_RelevanceGridDebugStatic &= ~8;
+
+		if (isLogMemoryStats)
+		{
+			DebugLogStaticMemoryStats();
+		}
 
 		for (const SRelevantCell& relevantCell : m_relevantCells)
 		{
@@ -577,6 +590,57 @@ namespace Schematyc2
 				}
 			}
 		}
+	}
+
+	void CRelevanceGrid::DebugLogStaticMemoryStats()
+	{
+		CryLogAlways("gridSize %d", m_gridSize);
+		CryLogAlways("grid size %zu, capacity %zu, mem %zu", m_grid.size(), m_grid.capacity(), m_grid.capacity() * sizeof(m_grid[0]));
+
+		struct SMemStat
+		{
+			size_t capVecMem = 0;
+			size_t useVecMem = 0;
+			size_t minCap = -1, maxCap = 0, avgCap = 0;
+			size_t minSize = -1, maxSize = 0, avgSize = 0;
+
+			void Update(const TUpdateCallbacks& v)
+			{
+				const size_t cap = v.capacity();
+				const size_t size = v.size();
+
+				minCap = std::min(cap, minCap);
+				maxCap = std::max(cap, maxCap);
+				avgCap += cap;
+
+				minSize = std::min(size, minSize);
+				maxSize = std::max(size, maxSize);
+				avgSize += size;
+
+				capVecMem += cap * sizeof(v[0]);
+				useVecMem += size * sizeof(v[0]);
+			}
+
+			void Log(const size_t count)
+			{
+				CryLogAlways("capacity min %zu max %zu avg %.2lf", minCap, maxCap, double(avgCap) / count);
+				CryLogAlways("size     min %zu max %zu avg %.2lf", minSize, maxSize, double(avgSize) / count);
+				CryLogAlways("capacity mem %zu", capVecMem);
+				CryLogAlways("used mem     %zu", useVecMem);
+				CryLogAlways("diff mem     %zu", capVecMem - useVecMem);
+			}
+		};
+
+		SMemStat global, local;
+		for (const SGridCell& cell : m_grid)
+		{
+			global.Update(cell.globalUpdateCallbacks);
+			local.Update(cell.localGridUpdateCallbacks);
+		}
+		CryLogAlways("global");
+		global.Log(m_grid.size());
+		CryLogAlways("local");
+		local.Log(m_grid.size());
 	}
 #endif // DEBUG_RELEVANCE_GRID
 
@@ -734,6 +798,8 @@ namespace Schematyc2
 	bool CUpdateScheduler::Update(UpdatePriority beginPriority, UpdatePriority endPriority, CUpdateRelevanceContext* pRelevanceContext)
 	{
 		CRY_PROFILE_FUNCTION(PROFILE_GAME);
+		MEMSTAT_CONTEXT(EMemStatContextTypes::MSC_Other, 0, "Schematyc2::CUpdateScheduler::Update");
+
 		if(m_bInFrame)
 		{
 			m_relevanceGrid.Update(pRelevanceContext);

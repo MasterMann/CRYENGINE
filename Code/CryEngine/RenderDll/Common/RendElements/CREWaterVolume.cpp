@@ -135,10 +135,9 @@ void CREWaterVolume::mfCenter(Vec3& vCenter, CRenderObject* pObj, const SRenderi
 		vCenter += pObj->GetMatrix(passInfo).GetTranslation();
 }
 
-void CREWaterVolume::mfGetBBox(Vec3& vMins, Vec3& vMaxs) const
+void CREWaterVolume::mfGetBBox(AABB& bb) const
 {
-	vMins = m_pParams->m_WSBBox.min;
-	vMaxs = m_pParams->m_WSBBox.max;
+	bb = m_pParams->m_WSBBox;
 }
 
 bool CREWaterVolume::Compile(CRenderObject* pObj, uint64 objFlags, ERenderElementFlags elmFlags, const AABB &localAABB, CRenderView *pRenderView, bool updateInstanceDataOnly)
@@ -349,7 +348,6 @@ void CREWaterVolume::DrawToCommandList(CRenderObject* pObj, const struct SGraphi
 	CRY_ASSERT(compiledObj.m_pPerDrawCB);
 	CRY_ASSERT(compiledObj.m_pPerDrawRS && compiledObj.m_pPerDrawRS->IsValid());
 
-	CD3D9Renderer* const RESTRICT_POINTER rd = gcpRendD3D;
 	CDeviceGraphicsCommandInterface& RESTRICT_REFERENCE commandInterface = *(commandList->GetGraphicsInterface());
 
 	// Set states
@@ -382,7 +380,6 @@ void CREWaterVolume::DrawToCommandList(CRenderObject* pObj, const struct SGraphi
 
 void CREWaterVolume::PrepareForUse(watervolume::SCompiledWaterVolume& compiledObj, bool bInstanceOnly, CDeviceCommandList& RESTRICT_REFERENCE commandList) const
 {
-	CD3D9Renderer* const RESTRICT_POINTER rd = gcpRendD3D;
 	CDeviceGraphicsCommandInterface* RESTRICT_POINTER pCommandInterface = commandList.GetGraphicsInterface();
 
 	if (!bInstanceOnly)
@@ -550,9 +547,10 @@ void CREWaterVolume::UpdateVertex(watervolume::SCompiledWaterVolume& compiledObj
 {
 	CRenderElement::SGeometryInfo geomInfo;
 	ZeroStruct(geomInfo);
-
+#if defined(USE_CRY_ASSERT)
 	const bool bDrawSurface = (m_drawWaterSurface || !m_pParams->m_viewerInsideVolume);
 	CRY_ASSERT((bFullscreen && !bDrawSurface) || (!bFullscreen && bDrawSurface));
+#endif
 
 	if (!bFullscreen)
 	{

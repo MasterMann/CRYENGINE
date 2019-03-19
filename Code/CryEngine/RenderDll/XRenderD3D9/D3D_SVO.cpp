@@ -706,7 +706,6 @@ void CSvoRenderer::SetupCommonConstants(SSvoTargetsSet* pTS, T& rp, CTexture* pR
 
 	{
 		static CCryNameR paramName("SVO_CloudShadowAnimParams");
-		CD3D9Renderer* const __restrict r = gcpRendD3D;
 		SRenderViewShaderConstants& PF = pRenderView->GetShaderConstants();
 		Vec4 vData;
 		vData[0] = PF.pCloudShadowAnimParams.x;
@@ -718,7 +717,6 @@ void CSvoRenderer::SetupCommonConstants(SSvoTargetsSet* pTS, T& rp, CTexture* pR
 
 	{
 		static CCryNameR paramName("SVO_CloudShadowParams");
-		CD3D9Renderer* const __restrict r = gcpRendD3D;
 		SRenderViewShaderConstants& PF = pRenderView->GetShaderConstants();
 		Vec4 vData;
 		vData[0] = PF.pCloudShadowParams.x;
@@ -1013,16 +1011,17 @@ void CSvoRenderer::CheckAllocateRT(bool bSpecPass)
 	int nWidth = screenResolution.x;
 	int nHeight = screenResolution.y;
 
-	int nVoxProxyViewportDim = e_svoVoxGenRes;
-
 	int nResScaleBase = max(e_svoTI_ResScaleBase + e_svoTI_LowSpecMode, 1);
-	int nDownscaleAir = max(e_svoTI_ResScaleAir + e_svoTI_LowSpecMode, 1);
 	int resScaleSpec = max(e_svoTI_ResScaleSpecular + e_svoTI_LowSpecMode, 1);
 
 	int nInW = (nWidth / nResScaleBase);
 	int nInH = (nHeight / nResScaleBase);
+#ifdef FEATURE_SVO_GI_ALLOW_HQ
+	int nDownscaleAir = max(e_svoTI_ResScaleAir + e_svoTI_LowSpecMode, 1);
 	int nAirW = (nWidth / nDownscaleAir);
 	int nAirH = (nHeight / nDownscaleAir);
+#endif
+
 	int specW = (nWidth / resScaleSpec);
 	int specH = (nHeight / resScaleSpec);
 
@@ -1100,16 +1099,67 @@ void CSvoRenderer::CheckAllocateRT(bool bSpecPass)
 	}
 }
 
+size_t CSvoRenderer::GetAllocatedMemory()
+{
+	size_t sizeSum = 0;
+
+	if (m_tsDiff.pRT_ALD_0.get()) sizeSum += m_tsDiff.pRT_ALD_0->GetActualSize();
+	if (m_tsDiff.pRT_ALD_1.get()) sizeSum += m_tsDiff.pRT_ALD_1->GetActualSize();
+	if (m_tsDiff.pRT_RGB_0.get()) sizeSum += m_tsDiff.pRT_RGB_0->GetActualSize();
+	if (m_tsDiff.pRT_RGB_1.get()) sizeSum += m_tsDiff.pRT_RGB_1->GetActualSize();
+
+	if (m_tsSpec.pRT_ALD_0.get()) sizeSum += m_tsSpec.pRT_ALD_0->GetActualSize();
+	if (m_tsSpec.pRT_ALD_1.get()) sizeSum += m_tsSpec.pRT_ALD_1->GetActualSize();
+	if (m_tsSpec.pRT_RGB_0.get()) sizeSum += m_tsSpec.pRT_RGB_0->GetActualSize();
+	if (m_tsSpec.pRT_RGB_1.get()) sizeSum += m_tsSpec.pRT_RGB_1->GetActualSize();
+
+#ifdef FEATURE_SVO_GI_ALLOW_HQ
+	if (m_pRT_NID_0  .get()) sizeSum += m_pRT_NID_0  ->GetActualSize();
+	if (m_pRT_AIR_MIN.get()) sizeSum += m_pRT_AIR_MIN->GetActualSize();
+	if (m_pRT_AIR_MAX.get()) sizeSum += m_pRT_AIR_MAX->GetActualSize();
+
+	if (m_pRT_SHAD_MIN_MAX.get()) sizeSum += m_pRT_SHAD_MIN_MAX->GetActualSize();
+	if (m_pRT_SHAD_FIN_0  .get()) sizeSum += m_pRT_SHAD_FIN_0  ->GetActualSize();
+	if (m_pRT_SHAD_FIN_1  .get()) sizeSum += m_pRT_SHAD_FIN_1  ->GetActualSize();
+#endif
+
+	if (m_tsDiff.pRT_RGB_DEM_MIN_0.get()) sizeSum += m_tsDiff.pRT_RGB_DEM_MIN_0->GetActualSize();
+	if (m_tsDiff.pRT_ALD_DEM_MIN_0.get()) sizeSum += m_tsDiff.pRT_ALD_DEM_MIN_0->GetActualSize();
+	if (m_tsDiff.pRT_RGB_DEM_MAX_0.get()) sizeSum += m_tsDiff.pRT_RGB_DEM_MAX_0->GetActualSize();
+	if (m_tsDiff.pRT_ALD_DEM_MAX_0.get()) sizeSum += m_tsDiff.pRT_ALD_DEM_MAX_0->GetActualSize();
+	if (m_tsDiff.pRT_RGB_DEM_MIN_1.get()) sizeSum += m_tsDiff.pRT_RGB_DEM_MIN_1->GetActualSize();
+	if (m_tsDiff.pRT_ALD_DEM_MIN_1.get()) sizeSum += m_tsDiff.pRT_ALD_DEM_MIN_1->GetActualSize();
+	if (m_tsDiff.pRT_RGB_DEM_MAX_1.get()) sizeSum += m_tsDiff.pRT_RGB_DEM_MAX_1->GetActualSize();
+	if (m_tsDiff.pRT_ALD_DEM_MAX_1.get()) sizeSum += m_tsDiff.pRT_ALD_DEM_MAX_1->GetActualSize();
+
+	if (m_tsDiff.pRT_FIN_OUT_0.get()) sizeSum += m_tsDiff.pRT_FIN_OUT_0->GetActualSize();
+	if (m_tsDiff.pRT_FIN_OUT_1.get()) sizeSum += m_tsDiff.pRT_FIN_OUT_1->GetActualSize();
+
+	if (m_tsSpec.pRT_RGB_DEM_MIN_0.get()) sizeSum += m_tsSpec.pRT_RGB_DEM_MIN_0->GetActualSize();
+	if (m_tsSpec.pRT_ALD_DEM_MIN_0.get()) sizeSum += m_tsSpec.pRT_ALD_DEM_MIN_0->GetActualSize();
+	if (m_tsSpec.pRT_RGB_DEM_MAX_0.get()) sizeSum += m_tsSpec.pRT_RGB_DEM_MAX_0->GetActualSize();
+	if (m_tsSpec.pRT_ALD_DEM_MAX_0.get()) sizeSum += m_tsSpec.pRT_ALD_DEM_MAX_0->GetActualSize();
+	if (m_tsSpec.pRT_RGB_DEM_MIN_1.get()) sizeSum += m_tsSpec.pRT_RGB_DEM_MIN_1->GetActualSize();
+	if (m_tsSpec.pRT_ALD_DEM_MIN_1.get()) sizeSum += m_tsSpec.pRT_ALD_DEM_MIN_1->GetActualSize();
+	if (m_tsSpec.pRT_RGB_DEM_MAX_1.get()) sizeSum += m_tsSpec.pRT_RGB_DEM_MAX_1->GetActualSize();
+	if (m_tsSpec.pRT_ALD_DEM_MAX_1.get()) sizeSum += m_tsSpec.pRT_ALD_DEM_MAX_1->GetActualSize();
+
+	if (m_tsSpec.pRT_FIN_OUT_0.get()) sizeSum += m_tsSpec.pRT_FIN_OUT_0->GetActualSize();
+	if (m_tsSpec.pRT_FIN_OUT_1.get()) sizeSum += m_tsSpec.pRT_FIN_OUT_1->GetActualSize();
+
+	return sizeSum;
+}
+
 bool CSvoRenderer::IsShaderItemUsedForVoxelization(SShaderItem& rShaderItem, IRenderNode* pRN)
 {
 	CShader* pS = (CShader*)rShaderItem.m_pShader;
-	CShaderResources* pR = (CShaderResources*)rShaderItem.m_pShaderResources;
 
 	// skip some objects marked by level designer
 	//	if(pRN && pRN->IsRenderNode() && pRN->GetIntegrationType())
 	//	return false;
 
 	// skip transparent meshes except decals
+	//	CShaderResources* pR = (CShaderResources*)rShaderItem.m_pShaderResources;
 	//	if((pR->Opacity() != 1.f) && !(pS->GetFlags()&EF_DECAL))
 	//	return false;
 
@@ -1785,8 +1835,6 @@ void CSvoRenderer::BindTiledLights(PodArray<I3DEngine::SLightTI>& lightsTI, T& r
 
 	CTiledLightVolumesStage::STiledLightShadeInfo* tiledLightShadeInfo = tiledLights->GetTiledLightShadeInfo();
 
-	const auto& viewInfo = RenderView()->GetViewInfo(CCamera::eEye_Left);
-
 	for (int l = 0; l < lightsTI.Count(); l++)
 	{
 		I3DEngine::SLightTI& svoLight = lightsTI[l];
@@ -1794,11 +1842,9 @@ void CSvoRenderer::BindTiledLights(PodArray<I3DEngine::SLightTI>& lightsTI, T& r
 		if (!svoLight.vDirF.w)
 			continue;
 
-		Vec4 worldViewPos = Vec4(viewInfo.cameraOrigin, 0);
-
 		for (uint32 lightIdx = 0; lightIdx < MaxNumTileLights && tiledLightShadeInfo[lightIdx].lightType != CTiledLightVolumesStage::tlTypeNone; ++lightIdx)
 		{
-			if ((tiledLightShadeInfo[lightIdx].lightType == CTiledLightVolumesStage::tlTypeRegularProjector) && svoLight.vPosR.IsEquivalent(tiledLightShadeInfo[lightIdx].posRad /*+ worldViewPos*/, .5f))
+			if ((tiledLightShadeInfo[lightIdx].lightType == CTiledLightVolumesStage::tlTypeRegularProjector) && svoLight.vPosR.IsEquivalent(tiledLightShadeInfo[lightIdx].posRad, .5f))
 			{
 				if (svoLight.vCol.w > 0)
 					svoLight.vCol.w = ((float)lightIdx + 100);

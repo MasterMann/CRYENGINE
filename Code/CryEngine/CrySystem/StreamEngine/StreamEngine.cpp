@@ -391,6 +391,7 @@ void UpdateIOThreadStats(
 void CStreamEngine::Update(uint32 nUpdateTypesBitmask)
 {
 	CRY_PROFILE_FUNCTION(PROFILE_SYSTEM);
+	MEMSTAT_CONTEXT(EMemStatContextTypes::MSC_Other, 0, "CStreamEngine::Update");
 
 	// Dispatch completed callbacks.
 	MainThread_FinalizeIOJobs(nUpdateTypesBitmask);
@@ -1118,6 +1119,9 @@ void WriteToStreamingLog(const char* str)
 //////////////////////////////////////////////////////////////////////////
 void CStreamEngine::DrawStatistics()
 {
+	if (!IRenderAuxGeom::GetAux())
+		return;
+
 	std::vector<CAsyncIOFileRequest_AutoPtr> tempRequests;
 
 	if (g_cvars.sys_streaming_debug == 4)

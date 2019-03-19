@@ -11,11 +11,13 @@ struct IIndexedMesh;
 struct IParticleEffect;
 
 #include "Cry3DEngineBase.h"
+#include "RenderMeshUtils.h"
+
 #include <CryCore/Containers/CryArray.h>
+#include <CryThreading/IJobManager.h>
 
 #include <Cry3DEngine/IStatObj.h>
 #include <CrySystem/IStreamEngine.h>
-#include "RenderMeshUtils.h"
 #include <CryMath/GeomQuery.h>
 
 #define MAX_PHYS_GEOMS_TYPES 4
@@ -156,9 +158,8 @@ struct SSyncToRenderMeshContext
 	}
 };
 
-class IStatObjLoadedCallback
+struct IStatObjLoadedCallback
 {
-public:
 	virtual ~IStatObjLoadedCallback() = default;
 	//! Will be called directly from the thread invoking LoadCGFAsync / LoadLowLODsAsync or later from the main thread.
 	virtual void OnLoaded(bool succeeded, CStatObj* object) = 0;
@@ -337,8 +338,8 @@ private:
 public:
 	//////////////////////////////////////////////////////////////////////////
 	// Fast non virtual access functions.
-	ILINE IStatObj::SSubObject& SubObject(int nIndex)  { return m_subObjects[nIndex]; };
-	ILINE int                   SubObjectCount() const { return m_subObjects.size(); };
+	ILINE IStatObj::SSubObject& SubObject(int nIndex)  { return m_subObjects[nIndex]; }
+	ILINE int                   SubObjectCount() const { return m_subObjects.size(); }
 	//////////////////////////////////////////////////////////////////////////
 
 	virtual bool IsUnloadable() const final { return m_bCanUnload; }
@@ -350,11 +351,11 @@ public:
 	virtual ILINE const Vec3 GetVegCenter() final          { return m_vVegCenter; }
 
 	virtual void             SetFlags(uint nFlags) final   { m_nFlags = nFlags; IncrementModificationId(); }
-	virtual uint             GetFlags() const final        { return m_nFlags; };
+	virtual uint             GetFlags() const final        { return m_nFlags; }
 
-	virtual unsigned int     GetVehicleOnlyPhysics() final { return m_bVehicleOnlyPhysics; };
-	virtual int              GetIDMatBreakable() final     { return m_idmatBreakable; };
-	virtual unsigned int     GetBreakableByGame() final    { return m_bBreakableByGame; };
+	virtual unsigned int     GetVehicleOnlyPhysics() final { return m_bVehicleOnlyPhysics; }
+	virtual int              GetIDMatBreakable() final     { return m_idmatBreakable; }
+	virtual unsigned int     GetBreakableByGame() final    { return m_bBreakableByGame; }
 
 	virtual bool IsDeformable() final;
 
@@ -369,8 +370,10 @@ private:
 	class CStatObjAsyncCGFLoader;
 	class AsyncLodLoader;
 	void LoadCGF_Prepare(const char* szFilename, bool isLod);
+	// ensure LoadCGF_Prepare() has been called before
 	bool LoadCGF(IChunkFile* chunkFile, const char* szFilename, bool isLod, uint32 loadingFlags);
 	bool LoadLowLODS_Prepare(uint32 loadingFlags);
+	// ensure LoadLowLODS_Prepare() has been called before
 	CStatObj* LoadLowLOD(int lodLevel, bool useStreaming, uint32 loadingFlags);
 	void LoadLowLODS_Finalize(int nLoadedLods, CStatObj* loadedLods[MAX_STATOBJ_LODS_NUM - 1]);
 	void MakeLodFileName(uint nLod, char (&buffer)[MAX_PATH]);
@@ -409,7 +412,7 @@ public:
 	//! Refresh object ( reload shaders or/and object geometry )
 	virtual void Refresh(int nFlags) final;
 
-	virtual IRenderMesh* GetRenderMesh() const final { return m_pRenderMesh; };
+	virtual IRenderMesh* GetRenderMesh() const final { return m_pRenderMesh; }
 	void SetRenderMesh(IRenderMesh * pRM);
 
 	virtual const char* GetFilePath() final                       { return m_szFileName.c_str(); }
@@ -467,7 +470,7 @@ public:
 	// -------------------------------------------------------------------------------
 
 	virtual void StartStreaming(bool bFinishNow, IReadStream_AutoPtr * ppStream) final;
-	void UpdateStreamingPrioriryInternal(const Matrix34A &objMatrix, float fDistance, bool bFullUpdate);
+	void UpdateStreamingPrioriryInternal(float fDistance, bool bFullUpdate);
 
 	void MakeCompiledFileName(char* szCompiledFileName, int nMaxLen);
 
@@ -505,7 +508,7 @@ public:
 	virtual bool RemoveSubObject(int nIndex) final;
 	virtual IStatObj* GetParentObject() const final      { return m_pParentObject; }
 	virtual IStatObj* GetCloneSourceObject() const final { return m_pClonedSourceObject; }
-	virtual bool      IsSubObject() const final          { return m_bSubObject; };
+	virtual bool      IsSubObject() const final          { return m_bSubObject; }
 	virtual bool CopySubObject(int nToIndex, IStatObj * pFromObj, int nFromIndex) final;
 	virtual int PhysicalizeSubobjects(IPhysicalEntity * pent, const Matrix34 * pMtx, float mass, float density = 0.0f, int id0 = 0,
 	                                  strided_pointer<int> pJointsIdMap = 0, const char* szPropsOverride = 0, int idbodyArtic = -1) final;
@@ -527,7 +530,7 @@ public:
 	virtual int Serialize(TSerialize ser) final;
 
 	// Get object properties as loaded from CGF.
-	virtual const char* GetProperties() final                  { return m_szProperties.c_str(); };
+	virtual const char* GetProperties() final                  { return m_szProperties.c_str(); }
 	virtual void        SetProperties(const char* props) final { m_szProperties = props; ParseProperties(); }
 
 	virtual bool GetPhysicalProperties(float& mass, float& density) final;
@@ -571,7 +574,7 @@ public:
 	virtual float GetLodDistance() const final     { return m_fLodDistance; }
 	virtual Vec3  GetDepthSortOffset() const final { return m_depthSortOffset; }
 	virtual int ComputeLodFromScale(float fScale, float fLodRatioNormalized, float fEntDistance, bool bFoliage, bool bForPrecache) final;
-	bool UpdateStreamableComponents(float fImportance, const Matrix34A &objMatrix, bool bFullUpdate, int nNewLod);
+	bool UpdateStreamableComponents(float fImportance, bool bFullUpdate, int nNewLod);
 	void GetStreamableName(string& sName) final
 	{
 		sName = m_szFileName;
@@ -580,7 +583,7 @@ public:
 			sName += " - ";
 			sName += m_szGeomName;
 		}
-	};
+	}
 	void GetStreamFilePath(stack_string & strOut);
 	void FillRenderObject(const SRendParams &rParams, IRenderNode * pRenderNode, IMaterial * pMaterial,
 	                      SInstancingInfo * pInstInfo, CRenderObject * &pObj, const SRenderingPassInfo &passInfo);

@@ -190,6 +190,22 @@ string GetGameProjectAssetsRelativePath()
 	return gEnv->pSystem->GetIProjectManager()->GetCurrentAssetDirectoryRelative();
 }
 
+string GetEditorCachePath()
+{
+	return Make(GetProjectFolder(), GetEditorCacheRelativePath());
+}
+
+string GetEditorCacheRelativePath()
+{
+	const ICVar* pCacheFolderVar = gEnv->pConsole->GetCVar("sys_resource_cache_folder");
+	return ToUnixPath(pCacheFolderVar->GetString());
+}
+
+string GetCurrentProjectDirectoryAbsolute()
+{
+	return gEnv->pSystem->GetIProjectManager()->GetCurrentProjectDirectoryAbsolute();
+}
+
 string GetCurrentPlatformFolder()
 {
 #ifdef CRY_PLATFORM_WINDOWS
@@ -365,7 +381,7 @@ string GamePathToCryPakPath(const string& path, bool bForWriting /*= false*/)
 	CRY_ASSERT(gEnv && gEnv->pCryPak);
 
 	char szAdjustedFile[ICryPak::g_nMaxPath];
-	const char* szTemp = gEnv->pCryPak->AdjustFileName(path.c_str(), szAdjustedFile, bForWriting ? ICryPak::FLAGS_FOR_WRITING : 0);
+	gEnv->pCryPak->AdjustFileName(path.c_str(), szAdjustedFile, bForWriting ? ICryPak::FLAGS_FOR_WRITING : 0);
 
 	return szAdjustedFile;
 }

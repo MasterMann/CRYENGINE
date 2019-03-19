@@ -4,25 +4,25 @@
 
 #include "KeybindEditor.h"
 
-#include "Command.h"
-#include "Commands/CommandModel.h"
 #include "Commands/CommandManager.h"
-#include "Commands/CustomCommand.h"
 #include "IEditorImpl.h"
-#include "QCommandAction.h"
 #include "QSearchBox.h"
 #include "QAdvancedTreeView.h"
 #include "ProxyModels/DeepFilterProxyModel.h"
 #include "Util/BoostPythonHelpers.h"
-#include "Qt/QtUtil.h"
 #include "QT/QtMainFrame.h"
-#include <FileDialogs/SystemFileDialog.h>
-#include <EditorFramework/Events.h>
 #include "QtViewPane.h"
-#include <QtUtil.h>
+
+#include <Commands/Command.h>
+#include <Commands/CommandModel.h>
+#include <Commands/CustomCommand.h>
+#include <Commands/QCommandAction.h>
 #include <CryIcon.h>
-#include <EditorStyleHelper.h>
 #include <CrySystem/IProjectManager.h>
+#include <EditorFramework/Events.h>
+#include <EditorStyleHelper.h>
+#include <FileDialogs/SystemFileDialog.h>
+#include <QtUtil.h>
 
 #include <QAbstractItemModel>
 #include <QAction>
@@ -253,8 +253,6 @@ void CKeybindEditor::KeybindModel::Rebuild()
 void CKeybindEditor::KeybindModel::UpdateConflicts(CUiCommand* command, QList<QKeySequence> oldShortcuts)
 {
 	QList<QKeySequence> shortcuts = static_cast<QCommandAction*>(command->GetUiInfo())->shortcuts();
-
-	bool bChanged = false;
 	QSet<CCommand*> changedCommands;
 
 	for (const QKeySequence& seq : oldShortcuts)
@@ -810,8 +808,6 @@ void CKeybindEditor::customEvent(QEvent* event)
 		const string& command = commandEvent->GetCommand();
 		if (command == "general.delete")
 		{
-			CEditorCommandManager* comMan = GetIEditorImpl()->GetCommandManager();
-
 			CCommand* command = nullptr;
 			QModelIndex index = m_treeView->selectionModel()->currentIndex();
 			if (index.isValid())
@@ -1002,12 +998,46 @@ void CKeybindEditor::SaveUserKeybinds()
 	UserDataUtil::Save(Private_KeybindEditor::szKeybindsPath, doc.toJson());
 }
 
+std::vector<string> CKeybindEditor::GetKeyBindDirectories(const char* szRelativePath)
+{
+	std::vector<string> result;
+
+	string editorToolbarPath = PathUtil::Make("Editor", szRelativePath);
+
+	// Engine defaults
+	result.push_back(PathUtil::Make(PathUtil::GetEnginePath().c_str(), editorToolbarPath));
+	// Game project specific tool-bars
+	result.push_back(PathUtil::Make(GetIEditor()->GetProjectManager()->GetCurrentProjectDirectoryAbsolute(), editorToolbarPath));
+	// User tool-bars
+	result.push_back(UserDataUtil::GetUserPath(szRelativePath));
+
+	return result;
+}
+
 void CKeybindEditor::LoadUserKeybinds()
 {
-	QVariant keybindsVariant = UserDataUtil::Load(Private_KeybindEditor::szKeybindsPath);
-	if (keybindsVariant.isValid())
+	std::vector<string> keyBindDirectories = GetKeyBindDirectories(Private_KeybindEditor::szKeybindsPath);
+	bool keyBindsUpdated = false;
+
+	// Load all keybinds in the order of Engine -> Project -> User defined
+	for (const string& keyBindDirectory : keyBindDirectories)
 	{
-		SetState(keybindsVariant);
+		QFile file(keyBindDirectory.c_str());
+		if (!file.open(QIODevice::ReadOnly))
+			continue;
+
+		QJsonDocument doc(QJsonDocument::fromJson(file.readAll()));
+		QVariant keybindsVariant = doc.toVariant();
+
+		if (keybindsVariant.isValid())
+		{
+			SetState(keybindsVariant);
+			keyBindsUpdated = true;
+		}
+	}
+
+	if (keyBindsUpdated)
+	{
 		GetIEditorImpl()->GetCommandManager()->signalChanged();
 	}
 }

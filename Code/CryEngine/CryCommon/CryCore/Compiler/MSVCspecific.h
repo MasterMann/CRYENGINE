@@ -1,17 +1,10 @@
 // Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
+#pragma once
+
 // -------------------------------------------------------------------------
-//  File name:   MSVCSpecific.h
-//  Version:     v1.00
-//  Created:     5/4/2005 by Scott
-//  Compilers:   Visual Studio.NET 2003
 //  Description: Settings for all builds under MS Visual C++ compiler
 // -------------------------------------------------------------------------
-//  History:
-//
-////////////////////////////////////////////////////////////////////////////
-
-#pragma once
 
 #ifndef _MSC_VER
 	#error This file should only be included on MSVC compiler
@@ -41,7 +34,7 @@
 #define __FUNC__               __FUNCTION__
 #define CRY_FUNC_HAS_SIGNATURE 0
 
-//! PREfast heleprs
+//! PREfast helpers
 #define PREFAST_SUPPRESS_WARNING(W) __pragma(warning(suppress: W))
 #ifdef _PREFAST_
 	#define PREFAST_ASSUME(cond)      __analysis_assume(cond)
@@ -112,8 +105,9 @@
 #pragma warning(disable: 4316)  // 'T' : object allocated on the heap may not be aligned X
 
 // Turn on the following very useful warnings.
-#pragma warning(3: 4264)        // no override available for virtual member function from base 'class'; function is hidden
-#pragma warning(3: 4266)        // no override available for virtual member function from base 'type'; function is hidden
+#pragma warning(3: 4264)     // no override available for virtual member function from base 'class'; function is hidden
+#pragma warning(3: 4266)     // no override available for virtual member function from base 'type'; function is hidden
+#pragma warning(error: 4189) // local variable is initialized but not referenced
 
 // Flag for enabling extended alignment for std::aligned_storage after VS 2017 15.8
 // Before VS 2017 15.8, the member type would non-conformingly have an alignment of only alignof(max_align_t). 

@@ -17,6 +17,7 @@
 class QWidget;
 class CryIcon;
 class QString;
+class QMimeData;
 class XmlNodeRef;
 
 namespace ACE
@@ -35,8 +36,9 @@ struct IImpl
 
 	//! Initializes the middleware implementation.
 	//! \param implInfo - Info struct to be filled by the middleware implementation.
-	//! \param platforms - Platform names of the current project.
-	virtual void Initialize(SImplInfo& implInfo, Platforms const& platforms) = 0;
+	//! \param extensionFilters - File extension filters used for file import.
+	//! \param supportedFileTypes - Supported file types used for file import.
+	virtual void Initialize(SImplInfo& implInfo, ExtensionFilterVector& extensionFilters, QStringList& supportedFileTypes) = 0;
 
 	//! Creates a new widget that is used for displaying middleware data in the middleware data panel.
 	//! \return A pointer to the data panel.
@@ -100,12 +102,19 @@ struct IImpl
 	//! \param pIConnection - Connection to serialize.
 	//! \param assetType - Type of the audio system control that has this connection.
 	//! \return An XML node with the connection serialized.
-	virtual XmlNodeRef CreateXMLNodeFromConnection(IConnection const* const pIConnection, EAssetType const assetType) = 0;
+	virtual XmlNodeRef CreateXMLNodeFromConnection(IConnection const* const pIConnection, EAssetType const assetType, CryAudio::ContextId const contextId) = 0;
 
 	//! The middleware implementation can provide an XML node that contains the amount of controls of the current library as attributes.
 	//! \param szTag - Tag of the node.
+	//! \param contextId - id of the context of the library that will contain the node.
 	//! \return An XML node that contains the amount of controls. Return nullptr if the node should not get written to the file.
-	virtual XmlNodeRef SetDataNode(char const* const szTag) = 0;
+	virtual XmlNodeRef SetDataNode(char const* const szTag, CryAudio::ContextId const contextId) = 0;
+
+	//! Signal the middleware implemementation that a library file will be written.
+	virtual void OnBeforeWriteLibrary() = 0;
+
+	//! Signal the middleware implemementation that a library file has been written.
+	virtual void OnAfterWriteLibrary() = 0;
 
 	//! Whenever a connection is added to an audio system control this function should be called to keep the system informed of which connections are being used.
 	//! \param pIConnection - Connection that has been enabled.
@@ -138,6 +147,19 @@ struct IImpl
 	//! Executed when file importer gets closed.
 	virtual void OnFileImporterClosed() = 0;
 
+	//! Check if external data is allowed to drop. Used for file import outside the middleware data panel.
+	virtual bool CanDropExternalData(QMimeData const* const pData) const = 0;
+
+	//! Drops external data.  Used for file import outside the middleware data panel.
+	virtual bool DropExternalData(QMimeData const* const pData, FileImportInfos& fileImportInfos) const = 0;
+
+	//! Generates an item id based on the given parameters. Used for file import.
+	//! \param name - name of the file.
+	//! \param path - path of the file inside the audio/assets folder.
+	//! \param isLocalized - bool if the item is localized or not.
+	//! \return the id of the item.
+	virtual ControlId GenerateItemId(QString const& name, QString const& path, bool const isLocalized) = 0;
+
 	//! Signal to get infos of audio system controls that are connected to the selected middleware control.
 	//! Used for context menu action to select a connected system control.
 	//! \param ControlId - Id of the selected middleware control.
@@ -150,14 +172,14 @@ struct IImpl
 	CCrySignal<void(ControlId const, ControlId const)> SignalSelectConnectedSystemControl;
 
 	//! Signal to open a file selection dialog to import files.
-	//! \param ExtensionFilterVector - List of supported file extensions and their descriptions.
-	//! \param QStringList - List of supported file types.
 	//! \param QString - Name of the target folder.
-	CCrySignal<void(ExtensionFilterVector const&, QStringList const&, QString const&, bool const)> SignalImportFiles;
+	//! \param bool - Is true when files to import are localized, otherwise false.
+	CCrySignal<void(QString const&, bool const)> SignalImportFiles;
 
 	//! Signal when files got dropped into the middleware data panel. Will open the file importer.
 	//! \param FileImportInfos - Info struct of the files to import.
 	//! \param QString - Name of the target folder.
+	//! \param bool - Is true when files to import are localized, otherwise false.
 	CCrySignal<void(FileImportInfos const&, QString const&, bool const)> SignalFilesDropped;
 };
 } // namespace Impl

@@ -2,6 +2,7 @@
 
 #pragma once
 
+#include <CryRenderer/IRenderer.h>
 #include <CryRenderer/ITexture.h>
 
 //===================================================================
@@ -11,6 +12,7 @@
 
 class CTexture;
 struct SEnvTexture;
+class CCVarUpdateRecorder;
 
 // Custom Textures IDs
 enum
@@ -98,6 +100,8 @@ enum
 
 class CRendererResources
 {
+	static bool RainOcclusionMapsInitialized() { return s_ptexRainSSOcclusion[0] != nullptr; }
+	static bool RainOcclusionMapsEnabled();
 
 public:
 	void InitResources() {}
@@ -121,10 +125,10 @@ public:
 	static void CreateSceneMaps(int resourceWidth, int resourceHeight);
 	static void CreateHDRMaps(int resourceWidth, int resourceHeight);
 	static bool CreatePostFXMaps(int resourceWidth, int resourceHeight);
-	static void CreateCachedShadowMaps();
-	static void CreateNearestShadowMap();
 	static void CreateDeferredMaps(int resourceWidth, int resourceHeight);
 	static void CreateSystemTargets(int resourceWidth, int resourceHeight);
+	static void PrepareRainOcclusionMaps();
+	static void CreateRainOcclusionMaps(int resourceWidth, int resourceHeight);
 
 	static void ResizeSystemTargets(int renderWidth, int renderHeight);
 
@@ -132,17 +136,18 @@ public:
 	static void DestroySceneMaps();
 	static void DestroyHDRMaps();
 	static void DestroyPostFXMaps();
-	static void DestroyCachedShadowMaps();
-	static void DestroyNearestShadowMap();
 	static void DestroyDeferredMaps();
 	static void DestroySystemTargets();
+	static void DestroyRainOcclusionMaps();
 
 	static void LoadDefaultSystemTextures();
 	static void UnloadDefaultSystemTextures(bool bFinalRelease = false);
 
 	static void Clear();
 	static void ShutDown();
+	static void Update(EShaderRenderingFlags renderingFlags);
 
+	static void OnCVarsChanged(const CCVarUpdateRecorder& rCVarRecs);
 	static void OnRenderResolutionChanged(int renderWidth, int renderHeight);
 	static void OnOutputResolutionChanged(int outputWidth, int outputHeight);
 	static void OnDisplayResolutionChanged(int displayWidth, int displayHeight);
@@ -239,9 +244,6 @@ public:
 
 	// CVar resolution [dependent] targets =====================================================================
 
-	static CTexture* s_ptexNearestShadowMap;                                     // CShadowMaskStage, CTiledShadingStage, CSceneForwardStage
-	static CTexture* s_ptexCachedShadowMap[MAX_GSM_LODS_NUM];                    // CShadowMapStage
-	static CTexture* s_ptexHeightMapAODepth[2];                                  // CShadowMapStage, CHeightMapAOStage
 	static CTexture* s_ptexRT_ShadowPool;                                        // CShadowMapStage
 	static CTexture* s_ptexVolCloudShadow;                                       // CVolumetricCloudsStage
 
@@ -293,7 +295,6 @@ public:
 	static CTexture* s_ptexModelHudBuffer;                                       // CV_r_UsePersistentRTForModelHUD, used by Menu3DModelRenderer to postprocess render models
 	static CTexture* s_ptexSceneCoC[MIN_DOF_COC_K];                              // CDepthOfFieldStage
 	static CTexture* s_ptexSceneCoCTemp;                                         // CDepthOfFieldStage
-	static CTexture* s_ptexHeightMapAO[2];                                       // CHeightMapAOStage
 	static CTexture* s_ptexWaterVolumeRefl[2];                                   // CWaterStage, water volume reflections buffer
 	static CTexture* s_ptexRainSSOcclusion[2];                                   // CRainStage, screen-space rain occlusion accumulation
 #if defined(VOLUMETRIC_FOG_SHADOWS)

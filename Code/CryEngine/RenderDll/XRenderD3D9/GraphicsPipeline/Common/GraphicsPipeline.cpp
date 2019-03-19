@@ -2,6 +2,7 @@
 
 #include "StdAfx.h"
 #include "GraphicsPipeline.h"
+#include "Common/RendererResources.h"
 
 //////////////////////////////////////////////////////////////////////////
 CGraphicsPipeline::CGraphicsPipeline()
@@ -32,7 +33,8 @@ void CGraphicsPipeline::ShutDown()
 	// destroy stages in reverse order to satisfy data dependencies
 	for (auto it = m_pipelineStages.rbegin(); it != m_pipelineStages.rend(); ++it)
 	{
-		if (*it) delete *it;
+		if (*it)
+			delete *it;
 	}
 
 	m_pipelineStages.fill(nullptr);
@@ -44,7 +46,8 @@ void CGraphicsPipeline::Resize(int renderWidth, int renderHeight)
 	// Sets the current render resolution on all the pipeline stages.
 	for (auto it = m_pipelineStages.begin(); it != m_pipelineStages.end(); ++it)
 	{
-		if (*it) (*it)->Resize(renderWidth, renderHeight);
+		if (*it)
+			(*it)->Resize(renderWidth, renderHeight);
 	}
 }
 
@@ -56,16 +59,16 @@ void CGraphicsPipeline::SetCurrentRenderView(CRenderView* pRenderView)
 	// Sets the current render view on all the pipeline stages.
 	for (auto it = m_pipelineStages.begin(); it != m_pipelineStages.end(); ++it)
 	{
-		if (*it) (*it)->SetRenderView(pRenderView);
+		if (*it)
+			(*it)->SetRenderView(pRenderView);
 	}
 }
 
 //////////////////////////////////////////////////////////////////////////
-void CGraphicsPipeline::Update(CRenderView* pRenderView, EShaderRenderingFlags renderingFlags)
+void CGraphicsPipeline::Update(EShaderRenderingFlags renderingFlags)
 {
-	SetCurrentRenderView(pRenderView);
+	CRendererResources::Update(renderingFlags);
 
-	// Sets the current render view on all the pipeline stages.
 	for (auto it = m_pipelineStages.begin(); it != m_pipelineStages.end(); ++it)
 	{
 		if (*it && (*it)->IsStageActive(renderingFlags))
@@ -74,10 +77,13 @@ void CGraphicsPipeline::Update(CRenderView* pRenderView, EShaderRenderingFlags r
 }
 
 //////////////////////////////////////////////////////////////////////////
-void CGraphicsPipeline::OnCVarsChanged(CCVarUpdateRecorder& rCVarRecs)
+void CGraphicsPipeline::OnCVarsChanged(const CCVarUpdateRecorder& rCVarRecs)
 {
+	CRendererResources::OnCVarsChanged(rCVarRecs);
+
 	for (auto it = m_pipelineStages.begin(); it != m_pipelineStages.end(); ++it)
 	{
-		if (*it) (*it)->OnCVarsChanged(rCVarRecs);
+		if (*it)
+			(*it)->OnCVarsChanged(rCVarRecs);
 	}
 }

@@ -33,7 +33,7 @@ bool CanMove(const std::vector<CAsset*>& assets, const string& folder)
 
 void OnMove(const std::vector<CAsset*>& assets, const QString& destinationFolder)
 {
-	const CAssetManager* const pAssetManager = CAssetManager::GetInstance();
+	CAssetManager* const pAssetManager = CAssetManager::GetInstance();
 
 	const QString question = QObject::tr("There is a possibility of undetected dependencies which can be violated after performing the operation.\n"
 		"\n"
@@ -80,8 +80,8 @@ CAssetFoldersModel::CAssetFoldersModel(QObject* parent /*= nullptr*/)
 	m_assetFolders = assetFolders.get();
 	m_root.m_subFolders.emplace_back(std::move(assetFolders));
 
-	CAssetManager::GetInstance()->signalBeforeAssetsUpdated.Connect(this, &CAssetFoldersModel::PreUpdate);
-	CAssetManager::GetInstance()->signalAfterAssetsUpdated.Connect(this, &CAssetFoldersModel::PostUpdate);
+	CAssetManager::GetInstance()->signalBeforeAssetsReset.Connect(this, &CAssetFoldersModel::PreReset);
+	CAssetManager::GetInstance()->signalAfterAssetsReset.Connect(this, &CAssetFoldersModel::PostReset);
 
 	CAssetManager::GetInstance()->signalBeforeAssetsInserted.Connect(this, &CAssetFoldersModel::PreInsert);
 
@@ -91,15 +91,15 @@ CAssetFoldersModel::CAssetFoldersModel(QObject* parent /*= nullptr*/)
 	//Build initially
 	if (CAssetManager::GetInstance()->GetAssetsCount() > 0)
 	{
-		PreUpdate();
-		PostUpdate();
+		PreReset();
+		PostReset();
 	}
 }
 
 CAssetFoldersModel::~CAssetFoldersModel()
 {
-	CAssetManager::GetInstance()->signalBeforeAssetsUpdated.DisconnectObject(this);
-	CAssetManager::GetInstance()->signalAfterAssetsUpdated.DisconnectObject(this);
+	CAssetManager::GetInstance()->signalBeforeAssetsReset.DisconnectObject(this);
+	CAssetManager::GetInstance()->signalAfterAssetsReset.DisconnectObject(this);
 
 	CAssetManager::GetInstance()->signalBeforeAssetsInserted.DisconnectObject(this);
 	CAssetManager::GetInstance()->signalAfterAssetsInserted.DisconnectObject(this);
@@ -391,12 +391,12 @@ QModelIndex CAssetFoldersModel::parent(const QModelIndex& index) const
 	}
 }
 
-void CAssetFoldersModel::PreUpdate()
+void CAssetFoldersModel::PreReset()
 {
 	beginResetModel();
 }
 
-void CAssetFoldersModel::PostUpdate()
+void CAssetFoldersModel::PostReset()
 {
 	Clear();
 	for (auto& asset : CAssetManager::GetInstance()->m_assets)

@@ -21,7 +21,6 @@ extern CItemModelAttributeEnumT<ObjectType> s_objectTypeAttribute;
 extern CItemModelAttribute s_objectTypeDescAttribute;
 extern CItemModelAttribute s_visibleAttribute;
 extern CItemModelAttribute s_frozenAttribute;
-extern CItemModelAttribute s_vcsAttribute;
 extern CItemModelAttribute s_defaultMaterialAttribute;
 extern CItemModelAttribute s_customMaterialAttribute;
 extern CItemModelAttribute s_breakableAttribute;
@@ -33,6 +32,7 @@ extern CItemModelAttribute s_lodCountAttribute;
 extern CItemModelAttribute s_specAttribute;
 extern CItemModelAttribute s_aiGroupIdAttribute;
 extern CItemModelAttribute s_LayerColorAttribute;
+extern CItemModelAttribute s_linkedToAttribute;
 }
 
 //! This class is not meant to be instantiated directly, request an instance from LevelModelsManager
@@ -60,6 +60,7 @@ public:
 		eObjectColumns_LODCount,
 		eObjectColumns_MinSpec,
 		eObjectColumns_AI_GroupId,
+		eObjectColumns_LinkedTo,
 		eObjectColumns_Size
 	};
 

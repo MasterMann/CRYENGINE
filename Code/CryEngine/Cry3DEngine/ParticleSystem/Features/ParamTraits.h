@@ -82,7 +82,7 @@ private:
 	static Serialization::RangeDecorator<T> Range(T& value)
 	{
 		return Serialization::Range(value, TTraits::HardMin(), TTraits::HardMax(), TTraits::SoftMin(), TTraits::SoftMax());
-	};
+	}
 
 	S m_value;
 };
@@ -154,6 +154,8 @@ typedef TValue<TDefaultInf<TPositive<float>>>   PInfFloat;
 
 typedef TValue<THardLimits<float, -1, 1>>       SUnitFloat;
 typedef TValue<THardLimits<float, 0, 1>>        UUnitFloat;
+
+typedef TValue<THardMin<uint, 1>>               PosInt;
 
 typedef TValue<THardLimits<uint, 0, 255>>       UByte;
 typedef TValue<THardLimits<uint, 1, 256>>       UBytePos;

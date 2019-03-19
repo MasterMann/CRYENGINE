@@ -1,17 +1,4 @@
 // Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
-
-/*************************************************************************
-   -------------------------------------------------------------------------
-   $Id$
-   $DateTime$
-
-   -------------------------------------------------------------------------
-   History:
-   - 20:7:2004   11:07 : Created by Marco Koegler
-   - 3:8:2004		16:00 : Taken-ver by Marcio Martins
-   - 2005              : Changed by everyone
-
-*************************************************************************/
 #include "StdAfx.h"
 #include "CryAction.h"
 
@@ -55,6 +42,7 @@
 #include <CrySystem/CryVersion.h>
 #include <CrySystem/Profilers/IStatoscope.h>
 #include <CrySystem/IStreamEngine.h>
+#include <Cry3DEngine/IColorGradingCtrl.h>
 #include <Cry3DEngine/ITimeOfDay.h>
 #include <CryGame/IGameStartup.h>
 
@@ -106,7 +94,6 @@
 #include "VehicleSystem.h"
 #include "SharedParams/SharedParamsManager.h"
 #include "ActionMapManager.h"
-#include "ColorGradientManager.h"
 
 #include "Statistics/GameStatistics.h"
 #include "UIDraw/UIDraw.h"
@@ -178,6 +165,9 @@
 
 #include <CryFlowGraph/IFlowBaseNode.h>
 
+#if !CrySharedLibrarySupported
+extern "C" IGameStartup * CreateGameStartup();
+#endif //!CrySharedLibrarySupported
 
 #define DEFAULT_BAN_TIMEOUT     (30.0f)
 
@@ -189,8 +179,6 @@
 #include "Network/NetMsgDispatcher.h"
 #include "EntityContainers/EntityContainerMgr.h"
 #include "FlowSystem/Nodes/FlowEntityCustomNodes.h"
-
-#include <CrySystem/Profilers/FrameProfiler/FrameProfiler_JobSystem.h>
 
 CCryAction* CCryAction::m_pThis = 0;
 
@@ -322,7 +310,6 @@ CCryAction::CCryAction(SSystemInitParams& initParams)
 	m_pScriptBindMFX(0),
 	m_pScriptBindUIAction(0),
 	m_pPersistantDebug(0),
-	m_pColorGradientManager(nullptr),
 #ifdef USE_NETWORK_STALL_TICKER_THREAD
 	m_pNetworkStallTickerThread(nullptr),
 	m_networkStallTickerReferences(0),
@@ -2016,11 +2003,6 @@ bool CCryAction::Initialize(SSystemInitParams& startupParams)
 	m_pEntityContainerMgr = new CEntityContainerMgr();
 	m_pEntityAttachmentExNodeRegistry = new CEntityAttachmentExNodeRegistry();
 	
-	if (gEnv->pRenderer)
-	{
-		m_pColorGradientManager = new CColorGradientManager();
-	}
-
 	InitGame(startupParams);
 
 	if (m_pVehicleSystem)
@@ -2059,6 +2041,7 @@ bool CCryAction::InitGame(SSystemInitParams& startupParams)
 
 	HMODULE hGameDll = 0;
 
+#if CrySharedLibrarySupported
 	IGameStartup::TEntryFunction CreateGameStartup = (IGameStartup::TEntryFunction)CryGetProcAddress(CryGetCurrentModule(), "CreateGameStartup");
 	if (!CreateGameStartup)
 	{
@@ -2098,6 +2081,7 @@ bool CCryAction::InitGame(SSystemInitParams& startupParams)
 			return false;
 		}
 	}
+#endif
 
 	// create the game startup interface
 	IGameStartup* pGameStartup = CreateGameStartup();
@@ -2476,8 +2460,6 @@ void CCryAction::ShutDown()
 	ReleaseScriptBinds();
 	ReleaseCVars();
 
-	SAFE_DELETE(m_pColorGradientManager);
-
 	SAFE_DELETE(m_pDevMode);
 	SAFE_DELETE(m_pCallbackTimer);
 
@@ -2535,7 +2517,6 @@ void CCryAction::PrePhysicsUpdate()
 void CCryAction::PreSystemUpdate()
 {
 	CRY_PROFILE_REGION(PROFILE_GAME, "CCryAction::PreRenderUpdate");
-	CRYPROFILE_SCOPE_PROFILE_MARKER("CCryAction::PreRenderUpdate");
 
 	if (!m_nextFrameCommand->empty())
 	{
@@ -2571,7 +2552,6 @@ uint32 CCryAction::GetPreUpdateTicks()
 bool CCryAction::PostSystemUpdate(bool haveFocus, CEnumFlags<ESystemUpdateFlags> updateFlags)
 {
 	CRY_PROFILE_REGION(PROFILE_GAME, "CCryAction::PostSystemUpdate");
-	CRYPROFILE_SCOPE_PROFILE_MARKER("CCryAction::PostSystemUpdate");
 
 	float frameTime = gEnv->pTimer->GetFrameTime();
 
@@ -2675,11 +2655,6 @@ bool CCryAction::PostSystemUpdate(bool haveFocus, CEnumFlags<ESystemUpdateFlags>
 			m_pCooperativeAnimationManager->Update(frameTime);
 	}
 
-	if (gEnv->pRenderer)
-	{
-		m_pColorGradientManager->UpdateForThisFrame(gEnv->pTimer->GetFrameTime());
-	}
-
 	CRConServerListener::GetSingleton().Update();
 	CSimpleHttpServerListener::GetSingleton().Update();
 
@@ -2709,7 +2684,6 @@ bool CCryAction::PostSystemUpdate(bool haveFocus, CEnumFlags<ESystemUpdateFlags>
 void CCryAction::PreFinalizeCamera(CEnumFlags<ESystemUpdateFlags> updateFlags)
 {
 	CRY_PROFILE_REGION(PROFILE_GAME, "CCryAction::PreFinalizeCamera");
-	CRYPROFILE_SCOPE_PROFILE_MARKER("CCryAction::PreFinalizeCamera");
 
 	if (m_pShowLanBrowserCVAR->GetIVal() == 0)
 	{
@@ -2749,7 +2723,6 @@ void CCryAction::PreFinalizeCamera(CEnumFlags<ESystemUpdateFlags> updateFlags)
 void CCryAction::PreRender()
 {
 	CRY_PROFILE_REGION(PROFILE_GAME, "CCryAction::PreRender");
-	CRYPROFILE_SCOPE_PROFILE_MARKER("CCryAction::PreRender");
 
 	CALL_FRAMEWORK_LISTENERS(OnPreRender());
 }
@@ -2757,7 +2730,6 @@ void CCryAction::PreRender()
 void CCryAction::PostRender(CEnumFlags<ESystemUpdateFlags> updateFlags)
 {
 	CRY_PROFILE_REGION(PROFILE_GAME, "CCryAction::PostRender");
-	CRYPROFILE_SCOPE_PROFILE_MARKER("CCryAction::PostRender");
 
 	if (updateFlags & ESYSUPDATE_EDITOR_AI_PHYSICS)
 	{
@@ -2801,7 +2773,7 @@ void CCryAction::PostRender(CEnumFlags<ESystemUpdateFlags> updateFlags)
 void CCryAction::PostRenderSubmit()
 {
 	CRY_PROFILE_REGION(PROFILE_GAME, "CCryAction::PostRenderSubmit");
-	CRYPROFILE_SCOPE_PROFILE_MARKER("CCryAction::PostRenderSubmit");
+	MEMSTAT_CONTEXT(EMemStatContextTypes::MSC_Other, 0, "CCryAction::PostRenderSubmit");
 
 	if (m_pGame)
 	{
@@ -3546,12 +3518,12 @@ ELoadGameResult CCryAction::LoadGame(const char* path, bool quick, bool ignoreDe
 IGameFramework::TSaveGameName CCryAction::CreateSaveGameName()
 {
 	//design wants to have different, more readable names for the savegames generated
-	int id = 0;
 
 	TSaveGameName saveGameName;
 #if CRY_PLATFORM_DURANGO
 	saveGameName = CRY_SAVEGAME_FILENAME;
 #else
+	int id = 0;
 	//saves a running savegame id which is displayed with the savegame name
 	if (IPlayerProfileManager* m_pPlayerProfileManager = gEnv->pGameFramework->GetIPlayerProfileManager())
 	{
@@ -4803,9 +4775,9 @@ void CCryAction::OnActionEvent(const SActionEvent& ev)
 
 	case eAE_unloadLevel:
 		{
-			if (gEnv->pRenderer)
+			if (gEnv->p3DEngine)
 			{
-				m_pColorGradientManager->Reset();
+				gEnv->p3DEngine->GetColorGradingCtrl()->SetColorGradingLut("", 0);
 			}
 		}
 		break;

@@ -5,12 +5,12 @@
 #include <CryMemory/CryPool/PoolAlloc.h>
 #include <CryThreading/IJobManager.h>
 #include <concqueue/concqueue.hpp>
-#include "TextMessages.h"                             // CTextMessages
+#include "TextMessages.h"
 #include "RenderAuxGeom.h"
 #include "RenderPipeline.h"
-#include "RenderThread.h"                             // SRenderThread
+#include "RenderThread.h"
 #include "../Scaleform/ScaleformRender.h"
-#include "../XRenderD3D9/DeviceManager/D3D11/DeviceSubmissionQueue_D3D11.h" // CSubmissionQueue_DX11
+#include "../XRenderD3D9/DeviceManager/D3D11/DeviceSubmissionQueue_D3D11.h"
 #include "ElementPool.h"
 
 typedef void (PROCRENDEF)(SShaderPass* l, int nPrimType);
@@ -40,7 +40,7 @@ enum eAntialiasingType
 	eAT_REQUIRES_SUBPIXELSHIFT_MASK = (eAT_SMAA_2TX_MASK | eAT_TSAA_MASK)
 };
 
-static const char* s_pszAAModes[eAT_AAMODES_COUNT] =
+constexpr const char* s_pszAAModes[eAT_AAMODES_COUNT] =
 {
 	"NO AA",
 	"SMAA 1X",
@@ -60,7 +60,6 @@ class CD3DStereoRenderer;
 class CTextureManager;
 class CIntroMovieRenderer;
 class IOpticsManager;
-struct SDynTexture2;
 class CDeviceResourceSet;
 class CVertexBuffer;
 class CIndexBuffer;
@@ -146,36 +145,6 @@ const float TANGENT30_2 = 0.57735026918962576450914878050196f * 2;   // 2*tan(30
 
 #include "RendererResources.h"
 #include "RendererCVars.h"                    // Can only be included after the default values are defined.
-
-struct SSpriteInfo
-{
-	SDynTexture2*             m_pTex;
-	struct SSectorTextureSet* m_pTerrainTexInfo;
-	Vec3                      m_vPos;
-	float                     m_fDX;
-	float                     m_fDY;
-	float                     m_fScaleV;
-	UCol                      m_Color;
-	int                       m_nVI;
-	uint8                     m_ucTexCoordMinX; // 0..128 used for the full range (0..1) in the texture (to fit in byte)
-	uint8                     m_ucTexCoordMinY; // 0..128 used for the full range (0..1) in the texture (to fit in byte)
-	uint8                     m_ucTexCoordMaxX; // 0..128 used for the full range (0..1) in the texture (to fit in byte)
-	uint8                     m_ucTexCoordMaxY; // 0..128 used for the full range (0..1) in the texture (to fit in byte)
-};
-
-struct SSpriteGenInfo
-{
-	float          fAngle;                      // horizontal rotation in degree
-	float          fGenDist;
-	float          fBrightness;
-	int            nMaterialLayers;
-	IMaterial*     pMaterial;
-	float*         pMipFactor;
-	uint8*         pTexturesAreStreamedIn;
-	SDynTexture2** ppTexture;
-	IStatObj*      pStatObj;
-	int            nSP;
-};
 
 class CMatrixStack
 {
@@ -975,13 +944,11 @@ public:
 	virtual void                SetShadowJittering(float shadowJittering) override;
 	virtual float               GetShadowJittering() const override;
 
-	void                        EF_AddClientPolys(const SRenderingPassInfo& passInfo);
-
 	virtual void*               FX_AllocateCharInstCB(SSkinningData*, uint32) { return NULL; }
 	virtual void                FX_ClearCharInstCB(uint32)                    {}
 
 	virtual EShaderQuality      EF_GetShaderQuality(EShaderType eST) final;
-	virtual ERenderQuality      EF_GetRenderQuality() const final             { return m_renderQuality.renderQuality; };
+	virtual ERenderQuality      EF_GetRenderQuality() const final             { return m_renderQuality.renderQuality; }
 
 	virtual void                EF_SubmitWind(const SWindGrid* pWind) override;
 
@@ -1052,7 +1019,7 @@ public:
 	virtual void EF_EndEf2D(const bool bSort) override = 0;
 
 	// Dynamic lights
-	virtual bool                   EF_IsFakeDLight(const SRenderLight* Source) override;
+	virtual bool                   EF_IsFakeDLight(const SRenderLight* Source) const override;
 	virtual void                   EF_ADDDlight(SRenderLight* Source, const SRenderingPassInfo& passInfo) override;
 	virtual bool                   EF_AddDeferredDecal(const SDeferredDecal& rDecal, const SRenderingPassInfo& passInfo) override;
 
@@ -1061,7 +1028,7 @@ public:
 	virtual void                   EF_ReleaseDeferredData() override;
 	virtual SInputShaderResources* EF_CreateInputShaderResource(IRenderShaderResources* pOptionalCopyFrom = nullptr) override;
 	virtual void                   ClearPerFrameData(const SRenderingPassInfo& passInfo);
-	virtual bool                   EF_UpdateDLight(SRenderLight* pDL) override;
+	virtual bool                   EF_UpdateDLight(SRenderLight* pDL) const override;
 	void                           EF_CheckLightMaterial(SRenderLight* pLight, uint16 nRenderLightID, const SRenderingPassInfo& passInfo);
 
 	virtual void EF_QueryImpl(ERenderQueryTypes eQuery, void* pInOut0, uint32 nInOutSize0, void* pInOut1, uint32 nInOutSize1) override;
@@ -1144,7 +1111,7 @@ public:
 	virtual ITexture* CreateTextureArray(const char* name, ETEX_Type eType, uint32 nWidth, uint32 nHeight, uint32 nArraySize, int nMips, uint32 nFlags, ETEX_Format eSrcFormat, int nCustomID) override;
 
 	enum ESPM {ESPM_PUSH = 0, ESPM_POP = 1};
-	virtual void   SetProfileMarker(const char* label, ESPM mode) const                              {};
+	virtual void   SetProfileMarker(const char* label, ESPM mode) const                              {}
 
 	virtual int    GetMaxTextureSize() override                                                               { return m_MaxTextureSize; }
 
@@ -1203,7 +1170,7 @@ public:
 
 	virtual void                                      SetCurDownscaleFactor(Vec2 sf) = 0;
 
-	virtual IGraphicsDeviceConstantBufferPtr          CreateGraphiceDeviceConstantBuffer() override                                              { assert(0);  return 0; };
+	virtual IGraphicsDeviceConstantBufferPtr          CreateGraphiceDeviceConstantBuffer() override                                              { assert(0);  return 0; }
 
 	virtual void                                      MakeMatrix(const Vec3& pos, const Vec3& angles, const Vec3& scale, Matrix34* mat) override { assert(0); }
 
@@ -1334,7 +1301,7 @@ public:
 
 	virtual compute_skinning::IComputeSkinningStorage* GetComputeSkinningStorage() = 0;
 
-	int   GetStreamZoneRoundId( int zone ) const { assert(zone >=0 && zone < MAX_PREDICTION_ZONES); return m_streamZonesRoundId[zone]; };
+	int   GetStreamZoneRoundId( int zone ) const { assert(zone >=0 && zone < MAX_PREDICTION_ZONES); return m_streamZonesRoundId[zone]; }
 
 	// Only should be used to get current frame id internally in the render thread.
 	int GetRenderFrameID() const;
@@ -1354,7 +1321,7 @@ public:
 	const SMSAA&          GetMSAA() const { return m_MSAAData; }
 
 	void                  SetRenderQuality( const SRenderQuality &quality );
-	const SRenderQuality& GetRenderQuality() const { return m_renderQuality; };
+	const SRenderQuality& GetRenderQuality() const { return m_renderQuality; }
 
 	// Animation time is used for rendering animation effects and can be paused if CRenderer::m_bPauseTimer is true
 	void                  SetAnimationTime(CTimeValue time) { m_animationTime = time; }
@@ -1486,7 +1453,7 @@ public:
 
 	SGpuInfo m_adapterInfo = {};
 public:
-	// these ids can be used for tripple (or more) buffered structures
+	// these ids can be used for triple (or more) buffered structures
 	// they are incremented in RenderWorld on the mainthread
 	// use m_nPoolIndex from the mainthread (or jobs which are synced before Renderworld)
 	// and m_nPoolIndexRT from the renderthread
@@ -1570,7 +1537,7 @@ protected:
 	float                                      m_shadowJittering;
 	StaticArray<int, MAX_GSM_LODS_NUM>         m_CachedShadowsResolution;
 
-	CSkinningDataPool                          m_SkinningDataPool[3];        // Tripple Buffered for motion blur
+	CSkinningDataPool                          m_SkinningDataPool[3];        // Triple Buffered for motion blur
 	std::array<std::vector<SSkinningData*>, 3> m_computeSkinningData;
 
 	int                                        m_cloudShadowTexId;

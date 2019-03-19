@@ -44,8 +44,6 @@ LINK_SYSTEM_LIBRARY("psapi.lib")
 //! 5 seconds from hot to cold in peaks.
 	#define MAX_DISPLAY_ROWS 80
 
-extern int CryMemoryGetAllocatedSize();
-extern int CryMemoryGetPoolSize();
 
 	#if defined(JOBMANAGER_SUPPORT_FRAMEPROFILER)
 
@@ -187,7 +185,7 @@ void CFrameProfileSystem::AddDisplayedProfiler(CFrameProfiler* pProfiler, int le
 	bool bExpended = pProfiler->m_bExpended;
 
 	int newLevel = level + 1;
-	if (!IsSubSystemFiltered(pProfiler))
+	if (!IsFiltered(pProfiler))
 	{
 		SProfilerDisplayInfo info;
 		info.level = level;
@@ -258,16 +256,19 @@ void CFrameProfileSystem::CalcDisplayedProfilers()
 	{
 		CFrameProfiler* pProfiler = (*m_pProfilers)[i];
 		// Skip this profiler if its filtered out.
-		if (IsSubSystemFiltered(pProfiler))
+		if (IsFiltered(pProfiler))
 			continue;
 
 		SProfilerDisplayInfo info;
 		info.averageCount = pProfiler->m_count.Average();
-		if (!info.averageCount)
-			continue;
-		if (m_displayQuantity != COUNT_INFO)
+		if (m_displayQuantity == COUNT_INFO)
 		{
-			if (pProfiler->m_displayedValue < profile_min_display_ms)
+			if (!info.averageCount)
+				continue;
+		}
+		else
+		{
+			if (abs(pProfiler->m_displayedValue) < profile_min_display_ms)
 				continue;
 		}
 		info.level = 0;
@@ -276,9 +277,9 @@ void CFrameProfileSystem::CalcDisplayedProfilers()
 	}
 
 	if (m_displayQuantity == COUNT_INFO)
-		stl::sort(m_displayedProfilers, [](SProfilerDisplayInfo const& info) { return -info.averageCount; });
+		stl::sort(m_displayedProfilers, [](SProfilerDisplayInfo const& info) { return -abs(info.averageCount); });
 	else
-		stl::sort(m_displayedProfilers, [](SProfilerDisplayInfo const& info) { return -info.pProfiler->m_displayedValue; });
+		stl::sort(m_displayedProfilers, [](SProfilerDisplayInfo const& info) { return -abs(info.pProfiler->m_displayedValue); });
 	if ((int)m_displayedProfilers.size() > m_maxProfileCount)
 		m_displayedProfilers.resize(m_maxProfileCount);
 }
@@ -431,7 +432,9 @@ void CFrameProfileSystem::Render()
 void CFrameProfileSystem::RenderProfilers(float col, float row, bool bExtended)
 {
 	//  float HeaderColor[4] = { 1,1,0,1 };
+#if defined(JOBMANAGER_SUPPORT_FRAMEPROFILER)
 	float CounterColor[4] = { 0, 0.8f, 1, 1 };
+#endif
 
 	// Header.
 	m_baseY += 40;
@@ -581,14 +584,14 @@ void CFrameProfileSystem::RenderProfilers(float col, float row, bool bExtended)
 void CFrameProfileSystem::RenderProfilerHeader(float col, float row, bool bExtended)
 {
 	char szText[256];
+#if defined(JOBMANAGER_SUPPORT_FRAMEPROFILER)
 	char szTitle[32];
+	bool bShowFrameTimeSummary = false;
+#endif
 	float MainHeaderColor[4] = { 0, 1, 1, 1 };
 	float HeaderColor[4] = { 1, 1, 0, 1 };
 	float CounterColor[4] = { 0, 0.8f, 1, 1 };
 	float PausedColor[4] = { 1, 0.3f, 0, 1 };
-	const float origCol = col;
-
-	bool bShowFrameTimeSummary = false;
 
 	#if defined(JOBMANAGER_SUPPORT_FRAMEPROFILER)
 	float rowOrig = row;
@@ -657,11 +660,11 @@ void CFrameProfileSystem::RenderProfilerHeader(float col, float row, bool bExten
 		sValueName = "StdDev";
 		break;
 	case ALLOCATED_MEMORY:
-		cry_strcpy(szText, "Profile Mode: Memory Allocations");
+		cry_strcpy(szText, "Profile Mode: Memory Allocation (KB)");
 		sValueName = "KB(s)";
 		break;
-	case ALLOCATED_MEMORY_BYTES:
-		cry_strcpy(szText, "Profile Mode: Memory Allocations (Bytes)");
+	case ALLOCATED_MEMORY_DELTA:
+		cry_strcpy(szText, "Profile Mode: Memory Allocation Delta");
 		sValueName = "Bytes";
 		break;
 	case PEAKS_ONLY:
@@ -750,8 +753,7 @@ else
 	}
 	else if (m_displayQuantity != PEAKS_ONLY)
 	{
-		//		col = 45;
-		DrawLabel(col - 14.f, row, CounterColor, 0, "min/max");
+		DrawLabel(col - 16.f, row, CounterColor, 0, "min/max");
 		DrawLabel(col - 3.5f, row, CounterColor, 0, "Count/");
 		DrawLabel(col + 1, row, HeaderColor, 0, sValueName);
 		if (m_displayQuantity != STALL_TIME)
@@ -852,7 +854,6 @@ void CFrameProfileSystem::RenderProfiler(CFrameProfiler* pProfiler, int level, f
 		}
 
 		cry_sprintf(szThreadName, "[%.8s]", BeatifyProfilerThreadName(GetProfilerThreadName(pProfiler)));
-
 		DrawLabel(col + colThreadfs, row, ThreadColor, glow, szThreadName);
 		DrawLabel(col + colTextOfs, row, ValueColor, glow, szText);
 
@@ -874,7 +875,7 @@ void CFrameProfileSystem::RenderProfiler(CFrameProfiler* pProfiler, int level, f
 			tmax = (float)pProfiler->m_count.Max();
 		}
 		cry_sprintf(szText, "%4.2f/%4.2f", tmin, tmax);
-		DrawLabel(col + colTextOfs - 21, row, ValueColor, glow, szText, 0.8f);
+		DrawLabel(col + colTextOfs - 23, row, ValueColor, glow, szText, 0.8f);
 	}
 	else
 	{
@@ -892,8 +893,7 @@ void CFrameProfileSystem::RenderProfiler(CFrameProfiler* pProfiler, int level, f
 			tmin = pProfiler->m_totalTime.Min();
 			tmax = pProfiler->m_totalTime.Max();
 			tave = pProfiler->m_totalTime.Average();
-			tnow = pProfiler->m_selfTime.Average();
-			//tnow = pProfiler->m_totalTime.Last();
+			tnow = pProfiler->m_totalTime.Last();
 		}
 		else
 		{
@@ -1233,17 +1233,15 @@ void CFrameProfileSystem::DrawGraph()
 	#endif
 
 	// UI item layout information
-	const float cWorkerGraphScale = 180.f;     // Worker Graph displays the last X frames
 	const float cTextAreaWidth = 220.f;        // Absolute Text Area width
-
+#if defined(JOBMANAGER_SUPPORT_FRAMEPROFILER)
 	// Do not render in the top X% of rt top area to allow space for the r_DisplayInfo 1 profiler
 	const float cTopSafeArea = 0.13f;
+#endif
 
 	// UI Control colour items
 	float labelColor[4] = { 1.f, 1.f, 1.f, 1.f };
 	float labelColDarkGreen[4] = { 0, 0.6f, 0.2f, 1.f };
-	float labelColRed[4] = { 1.f, 0, 0, 1.f };
-	float labelColorSuspended[4] = { 0.25f, 0.25f, 0.25f, 1.f };
 	ColorF graphColor(0, 0.85, 0, 1);
 
 	IRenderAuxGeom* pRenderAux = m_pRenderer->GetIRenderAuxGeom();
@@ -1261,9 +1259,7 @@ void CFrameProfileSystem::DrawGraph()
 	const int fOverscanAdjY = (int)(overscanBorder.y * (float)nRtHeight);
 
 	// Surface Area
-	const float nSafeAreaY = nRtHeight * cTopSafeArea;
 	const float nSurfaceWidth = nRtWidth - fOverscanAdjX;
-	const float nSurfaceHeight = nRtHeight - nSafeAreaY - fOverscanAdjX;
 
 	// Calculate worker graph dimensions
 	const float nTextAreaWidth = cTextAreaWidth * FrameProfileRenderConstants::c_yScale;
@@ -1272,7 +1268,9 @@ void CFrameProfileSystem::DrawGraph()
 	const int nGraphWidth = (int)(nSurfaceWidth - nGraphStartX - nSurfaceWidth * 0.05f * FrameProfileRenderConstants::c_yScale);   // Add a 5% of RT width gap to the right RT edge
 
 	const float nTextAreaWidthOvrScnAdj = nTextAreaWidth + fOverscanAdjX;
+#if defined(JOBMANAGER_SUPPORT_FRAMEPROFILER)
 	const float nGraphStartXOvrScnAdj = nGraphStartX + fOverscanAdjX;
+#endif
 
 	// Absolute coordinates tracker
 	float x = 0;
@@ -1457,12 +1455,11 @@ void CFrameProfileSystem::DrawGraph()
 
 			DrawTextLabel(m_pRenderer, x, y, labelColDarkGreen, FrameProfileRenderConstants::c_fontScale, "Frame Timings:");
 
-			const float frameTime = m_frameTimeHistory.GetLast();
-			const float framesPerSec = 1.0f / ((frameTime + VALUE_EPSILON) * 0.001f); // Convert ms to fps (1/ms = fps)
-			const float framePercentage = frameTime * (1.f / 200.f);
+			const float framesPerSec = 1.0f / ((m_frameTime + VALUE_EPSILON) * 0.001f); // Convert ms to fps (1/ms = fps)
+			const float framePercentage = m_frameTime * (1.f / 200.f);
 
 			x += 5;
-			DrawTextLabel(m_pRenderer, x, y, labelColor, FrameProfileRenderConstants::c_fontScale, "Time: %06.2fms", frameTime);
+			DrawTextLabel(m_pRenderer, x, y, labelColor, FrameProfileRenderConstants::c_fontScale, "Time: %06.2fms", m_frameTime);
 
 			x += fOverscanAdjX;
 			y += fOverscanAdjY + 5; // Push the meter down a further 5 for correct look
@@ -1534,12 +1531,9 @@ void CFrameProfileSystem::RenderHistograms()
 
 	// Draw histograms.
 	int h = m_pRenderer->GetOverlayHeight();
-	int w = m_pRenderer->GetOverlayWidth();
 
 	int graphStyle = 2; // histogram.
-
 	float fScale = 1.0f; // histogram.
-
 
 	for (int i = 0; i < (int)m_displayedProfilers.size(); i++)
 	{
@@ -1574,9 +1568,7 @@ void CFrameProfileSystem::RenderSubSystems(float col, float row)
 	char szWaitText[128];
 	float HeaderColor[4] = { 1, 1, 0, 1 };
 	float ValueColor[4] = { 0, 1, 0, 1 };
-	float CounterColor[4] = { 0, 0.8f, 1, 1 };
 
-	float colPercOfs = -3.0f;
 	float colTextOfs = 9.0f;
 
 	m_baseY += 40;
@@ -1665,7 +1657,7 @@ void CFrameProfileSystem::RenderMemoryInfo()
 	//////////////////////////////////////////////////////////////////////////
 	// Show memory usage.
 	//////////////////////////////////////////////////////////////////////////
-	uint64 memUsage = 0;//CryMemoryGetAllocatedSize();
+	uint64 memUsage = 0;
 	int64 totalAll = 0;
 	int luaMemUsage = gEnv->pScriptSystem->GetScriptAllocSize();
 
@@ -1698,7 +1690,10 @@ void CFrameProfileSystem::RenderMemoryInfo()
 	DrawLabel(col4, row, HeaderColor, 0, "Total Allocs(KB)", fLabelScale);
 	float col5 = col4 + 20;
 	DrawLabel(col5, row, HeaderColor, 0, "Total Wasted(KB)", fLabelScale);
+
+#if !(CRY_PLATFORM_LINUX || CRY_PLATFORM_ANDROID)
 	int totalUsedInModulesStatic = 0;
+#endif
 
 	row++;
 

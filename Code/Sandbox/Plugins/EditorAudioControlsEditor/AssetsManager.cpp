@@ -3,9 +3,8 @@
 #include "StdAfx.h"
 #include "AssetsManager.h"
 
-#include "Common.h"
 #include "AudioControlsEditorPlugin.h"
-#include "ImplementationManager.h"
+#include "ImplManager.h"
 #include "AssetUtils.h"
 #include "Common/IConnection.h"
 #include "Common/IImpl.h"
@@ -17,23 +16,22 @@ namespace ACE
 {
 ControlId CAssetsManager::m_nextId = 1;
 
-static constexpr uint32 g_controlPoolSize = 8192;
-static constexpr uint32 g_folderPoolSize = 1024;
-static constexpr uint32 g_libraryPoolSize = 256;
+constexpr uint16 g_controlPoolSize = 8192;
+constexpr uint16 g_folderPoolSize = 1024;
+constexpr uint16 g_libraryPoolSize = 256;
 
 //////////////////////////////////////////////////////////////////////////
 CAssetsManager::CAssetsManager()
 {
 	ClearDirtyFlags();
-	m_scopes[GlobalScopeId] = SScopeInfo(s_szGlobalScopeName, false);
-	m_controls.reserve(8192);
+	m_controls.reserve(static_cast<size_t>(g_controlPoolSize));
 }
 
 //////////////////////////////////////////////////////////////////////////
 CAssetsManager::~CAssetsManager()
 {
-	g_implementationManager.SignalOnBeforeImplementationChange.DisconnectById(reinterpret_cast<uintptr_t>(this));
-	g_implementationManager.SignalOnAfterImplementationChange.DisconnectById(reinterpret_cast<uintptr_t>(this));
+	g_implManager.SignalOnBeforeImplChange.DisconnectById(reinterpret_cast<uintptr_t>(this));
+	g_implManager.SignalOnAfterImplChange.DisconnectById(reinterpret_cast<uintptr_t>(this));
 	CAudioControlsEditorPlugin::SignalOnBeforeLoad.DisconnectById(reinterpret_cast<uintptr_t>(this));
 	CAudioControlsEditorPlugin::SignalOnAfterLoad.DisconnectById(reinterpret_cast<uintptr_t>(this));
 	Clear();
@@ -46,21 +44,16 @@ CAssetsManager::~CAssetsManager()
 //////////////////////////////////////////////////////////////////////////
 void CAssetsManager::Initialize()
 {
-	MEMSTAT_CONTEXT(EMemStatContextTypes::MSC_AudioSystem, 0, "ACE Control Pool");
 	CControl::CreateAllocator(g_controlPoolSize);
-
-	MEMSTAT_CONTEXT(EMemStatContextTypes::MSC_AudioSystem, 0, "ACE Folder Pool");
 	CFolder::CreateAllocator(g_folderPoolSize);
-
-	MEMSTAT_CONTEXT(EMemStatContextTypes::MSC_AudioSystem, 0, "ACE Library Pool");
 	CLibrary::CreateAllocator(g_libraryPoolSize);
 
-	g_implementationManager.SignalOnBeforeImplementationChange.Connect([this]()
+	g_implManager.SignalOnBeforeImplChange.Connect([this]()
 		{
 			ClearAllConnections();
 		}, reinterpret_cast<uintptr_t>(this));
 
-	g_implementationManager.SignalOnAfterImplementationChange.Connect([this]()
+	g_implManager.SignalOnAfterImplChange.Connect([this]()
 		{
 			m_isLoading = false;
 		}, reinterpret_cast<uintptr_t>(this));
@@ -98,7 +91,6 @@ CControl* CAssetsManager::CreateControl(string const& name, EAssetType const typ
 				SignalOnBeforeAssetAdded(pParent);
 
 				auto const pNewControl = new CControl(name, GenerateUniqueId(), type);
-
 				m_controls.push_back(pNewControl);
 
 				pNewControl->SetParent(pParent);
@@ -170,51 +162,12 @@ CControl* CAssetsManager::CreateDefaultControl(string const& name, EAssetType co
 
 	if (pControl != nullptr)
 	{
-		pControl->SetScope(GlobalScopeId);
+		pControl->SetContextId(CryAudio::GlobalContextId);
 		pControl->SetDescription(description);
 		pControl->SetFlags(pControl->GetFlags() | flags);
 	}
 
 	return pControl;
-}
-
-//////////////////////////////////////////////////////////////////////////
-void CAssetsManager::ClearScopes()
-{
-	m_scopes.clear();
-
-	// The global scope must always exist
-	m_scopes[GlobalScopeId] = SScopeInfo(s_szGlobalScopeName, false);
-}
-
-//////////////////////////////////////////////////////////////////////////
-void CAssetsManager::AddScope(string const& name, bool const isLocalOnly /*= false*/)
-{
-	m_scopes[CryAudio::StringToId(name.c_str())] = SScopeInfo(name, isLocalOnly);
-}
-
-//////////////////////////////////////////////////////////////////////////
-bool CAssetsManager::ScopeExists(string const& name) const
-{
-	return m_scopes.find(CryAudio::StringToId(name.c_str())) != m_scopes.end();
-}
-
-//////////////////////////////////////////////////////////////////////////
-void CAssetsManager::GetScopeInfos(ScopeInfos& scopeInfos) const
-{
-	stl::map_to_vector(m_scopes, scopeInfos);
-}
-
-//////////////////////////////////////////////////////////////////////////
-Scope CAssetsManager::GetScope(string const& name) const
-{
-	return CryAudio::StringToId(name.c_str());
-}
-
-//////////////////////////////////////////////////////////////////////////
-SScopeInfo CAssetsManager::GetScopeInfo(Scope const id) const
-{
-	return stl::find_in_map(m_scopes, id, SScopeInfo());
 }
 
 //////////////////////////////////////////////////////////////////////////
@@ -229,7 +182,6 @@ void CAssetsManager::Clear()
 
 	CRY_ASSERT_MESSAGE(m_controls.empty(), "m_controls is not empty during %s", __FUNCTION__);
 	CRY_ASSERT_MESSAGE(m_libraries.empty(), "m_systemLibraries is not empty during %s", __FUNCTION__);
-	ClearScopes();
 	ClearDirtyFlags();
 }
 
@@ -328,13 +280,13 @@ void CAssetsManager::OnBeforeControlModified(CControl* const pControl)
 }
 
 //////////////////////////////////////////////////////////////////////////
-void CAssetsManager::OnConnectionAdded(CControl* const pControl, Impl::IItem* const pIItem)
+void CAssetsManager::OnConnectionAdded(CControl* const pControl)
 {
 	SignalConnectionAdded(pControl);
 }
 
 //////////////////////////////////////////////////////////////////////////
-void CAssetsManager::OnConnectionRemoved(CControl* const pControl, Impl::IItem* const pIItem)
+void CAssetsManager::OnConnectionRemoved(CControl* const pControl)
 {
 	SignalConnectionRemoved(pControl);
 }
@@ -350,11 +302,11 @@ void CAssetsManager::UpdateConfigFolderPath()
 {
 	if (g_pIImpl != nullptr)
 	{
-		m_configFolderPath = AUDIO_SYSTEM_DATA_ROOT "/" + string(g_implInfo.folderName) + "/" + CryAudio::s_szConfigFolderName + "/";
+		m_configFolderPath = CRY_AUDIO_DATA_ROOT "/" + string(g_implInfo.folderName) + "/" + CryAudio::g_szConfigFolderName + "/";
 	}
 	else
 	{
-		m_configFolderPath = AUDIO_SYSTEM_DATA_ROOT "/";
+		m_configFolderPath = CRY_AUDIO_DATA_ROOT "/";
 	}
 }
 //////////////////////////////////////////////////////////////////////////
@@ -774,5 +726,17 @@ CAsset* CAssetsManager::CreateAndConnectImplItemsRecursively(Impl::IItem* const 
 	}
 
 	return pAsset;
+}
+
+//////////////////////////////////////////////////////////////////////////
+void CAssetsManager::ChangeContext(CryAudio::ContextId const oldContextId, CryAudio::ContextId const newContextId)
+{
+	for (auto const pControl : m_controls)
+	{
+		if (pControl->GetContextId() == oldContextId)
+		{
+			pControl->SetContextId(newContextId);
+		}
+	}
 }
 } // namespace ACE

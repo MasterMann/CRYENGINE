@@ -65,7 +65,6 @@
 #include "XML/XmlUtils.h"
 #include "Serialization/ArchiveHost.h"
 #include <CrySystem/Profilers/IDiskProfiler.h>
-#include <CrySystem/Profilers/FrameProfiler/FrameProfiler_JobSystem.h>
 #include "SystemEventDispatcher.h"
 #include "HardwareMouse.h"
 #include "ServerThrottle.h"
@@ -242,6 +241,7 @@ CSystem::CSystem(const SSystemInitParams& startupParams)
 	m_env.bServer = false;
 	m_env.bMultiplayer = false;
 	m_env.bHostMigrating = false;
+	m_env.bFrameProfilerActive = 0;
 	m_env.bDeepProfiling = 0;
 	m_env.bBootProfilerEnabledFrames = false;
 	m_env.callbackStartSection = 0;
@@ -427,7 +427,6 @@ CSystem::CSystem(const SSystemInitParams& startupParams)
 	m_env.pJobManager = GetJobManagerInterface();
 
 	m_UpdateTimesIdx = 0U;
-	m_bNeedDoWorkDuringOcclusionChecks = false;
 
 	m_PlatformOSCreateFlags = 0;
 
@@ -1055,7 +1054,6 @@ public:
 		LARGE_INTEGER stepStart, stepEnd;
 #endif
 		LARGE_INTEGER waitStart, waitEnd;
-		uint64 yieldBegin = 0U;
 
 		while (true)
 		{
@@ -1186,7 +1184,6 @@ public:
 	void EnsureStepDone()
 	{
 		CRY_PROFILE_REGION_WAITING(PROFILE_SYSTEM, "SysUpdate:PhysicsEnsureDone");
-		CRYPROFILE_SCOPE_PROFILE_MARKER("SysUpdate:PhysicsEnsureDone");
 
 		if (m_bIsActive)
 		{
@@ -1422,7 +1419,6 @@ int prev_sys_float_exceptions = -1;
 void CSystem::PrePhysicsUpdate()
 {
 	CRY_PROFILE_REGION(PROFILE_SYSTEM, "System::PrePhysicsUpdate");
-	CRYPROFILE_SCOPE_PROFILE_MARKER("System::PrePhysicsUpdate");
 
 	if (m_env.pGameFramework)
 	{
@@ -1513,7 +1509,6 @@ bool CSystem::DoFrame(const SDisplayContextKey& displayContextKey, CEnumFlags<ES
 	}
 
 	CRY_PROFILE_REGION(PROFILE_SYSTEM, __FUNC__);
-	CRYPROFILE_SCOPE_PROFILE_MARKER(__FUNC__);
 
 	if (m_env.pGameFramework != nullptr)
 	{
@@ -1659,11 +1654,6 @@ bool CSystem::DoFrame(const SDisplayContextKey& displayContextKey, CEnumFlags<ES
 
 		m_env.p3DEngine->SyncProcessStreamingUpdate();
 
-		if (NeedDoWorkDuringOcclusionChecks())
-		{
-			DoWorkDuringOcclusionChecks();
-		}
-
 		m_env.pFrameProfileSystem->EndFrame();
 	}
 
@@ -1677,7 +1667,6 @@ bool CSystem::Update(CEnumFlags<ESystemUpdateFlags> updateFlags, int nPauseMode)
 {
 	CRY_PROFILE_REGION(PROFILE_SYSTEM, "System: Update");
 	CRY_PROFILE_FUNCTION(PROFILE_SYSTEM)
-	CRYPROFILE_SCOPE_PROFILE_MARKER("CSystem::Update()");
 	MEMSTAT_CONTEXT(EMemStatContextTypes::MSC_Other, 0, "CSystem::Update");
 
 #ifndef EXCLUDE_UPDATE_ON_CONSOLE
@@ -2016,7 +2005,6 @@ bool CSystem::Update(CEnumFlags<ESystemUpdateFlags> updateFlags, int nPauseMode)
 		if (!pPhysicsThreadTask)
 		{
 			CRY_PROFILE_REGION(PROFILE_SYSTEM, "SystemUpdate: AllAIAndPhysics");
-			CRYPROFILE_SCOPE_PROFILE_MARKER("SystemUpdate: AllAIAndPhysics");
 
 			//////////////////////////////////////////////////////////////////////
 			// update entity system (a little bit) before physics
@@ -2034,7 +2022,7 @@ bool CSystem::Update(CEnumFlags<ESystemUpdateFlags> updateFlags, int nPauseMode)
 				maxTimeStep = 0.25f;
 			int maxSteps = 1;
 			float fCurTime = m_Time.GetCurrTime();
-			float fPrevTime = m_env.pPhysicalWorld->GetPhysicsTime();
+			//float fPrevTime = m_env.pPhysicalWorld->GetPhysicsTime();
 			float timeToDo = m_Time.GetFrameTime();//fCurTime - fPrevTime;
 			if (m_env.bMultiplayer)
 				timeToDo = m_Time.GetRealFrameTime();
@@ -2049,7 +2037,7 @@ bool CSystem::Update(CEnumFlags<ESystemUpdateFlags> updateFlags, int nPauseMode)
 				{
 					CRY_PROFILE_REGION(PROFILE_SYSTEM, "SysUpdate:Physics");
 
-					int iPrevTime = m_env.pPhysicalWorld->GetiPhysicsTime();
+					//int iPrevTime = m_env.pPhysicalWorld->GetiPhysicsTime();
 					//float fPrevTime=m_env.pPhysicalWorld->GetPhysicsTime();
 					pVars->bMultithreaded = 0;
 					pVars->timeScalePlayers = 1.0f;
@@ -2093,7 +2081,6 @@ bool CSystem::Update(CEnumFlags<ESystemUpdateFlags> updateFlags, int nPauseMode)
 				if (bNotLoading)
 				{
 					CRY_PROFILE_REGION(PROFILE_SYSTEM, "SysUpdate:PumpLoggedEvents");
-					CRYPROFILE_SCOPE_PROFILE_MARKER("PumpLoggedEvents");
 					m_env.pPhysicalWorld->PumpLoggedEvents();
 				}
 
@@ -2123,7 +2110,6 @@ bool CSystem::Update(CEnumFlags<ESystemUpdateFlags> updateFlags, int nPauseMode)
 			if (bNotLoading)
 			{
 				CRY_PROFILE_REGION(PROFILE_SYSTEM, "SysUpdate:PumpLoggedEvents");
-				CRYPROFILE_SCOPE_PROFILE_MARKER("PumpLoggedEvents");
 				m_env.pPhysicalWorld->PumpLoggedEvents();
 			}
 
@@ -2242,13 +2228,9 @@ bool CSystem::Update(CEnumFlags<ESystemUpdateFlags> updateFlags, int nPauseMode)
 
 	//////////////////////////////////////////////////////////////////////
 	//update sound system part 2
-	if (!g_cvars.sys_deferAudioUpdateOptim && !bNoUpdate)
+	if (!bNoUpdate)
 	{
 		UpdateAudioSystems();
-	}
-	else
-	{
-		m_bNeedDoWorkDuringOcclusionChecks = true;
 	}
 
 	//////////////////////////////////////////////////////////////////////
@@ -2367,15 +2349,6 @@ bool CSystem::UpdateLoadtime()
 	return !m_bQuit;
 }
 
-void CSystem::DoWorkDuringOcclusionChecks()
-{
-	if (g_cvars.sys_deferAudioUpdateOptim && !m_bNoUpdate)
-	{
-		UpdateAudioSystems();
-		m_bNeedDoWorkDuringOcclusionChecks = false;
-	}
-}
-
 void CSystem::UpdateAudioSystems()
 {
 	const bool isLoadInProgress = m_systemGlobalState > ESYSTEM_GLOBAL_STATE_INIT &&
@@ -2384,7 +2357,6 @@ void CSystem::UpdateAudioSystems()
 	if (m_env.pAudioSystem != nullptr && !isLoadInProgress)   //do not update pAudioSystem during async level load
 	{
 		CRY_PROFILE_SECTION(PROFILE_SYSTEM, "UpdateAudioSystems");
-		CRYPROFILE_SCOPE_PROFILE_MARKER("UpdateAudioSystems");
 
 		m_env.pAudioSystem->ExternalUpdate();
 	}
@@ -2830,8 +2802,13 @@ IResourceManager* CSystem::GetIResourceManager()
 //////////////////////////////////////////////////////////////////////////
 void CSystem::debug_GetCallStackRaw(void** callstack, uint32& callstackLength)
 {
+#if CRY_PLATFORM_ORBIS || CRY_PLATFORM_WINAPI
 	uint32 callstackCapacity = callstackLength;
+#endif
+
+#if CRY_PLATFORM_WINAPI
 	uint32 nNumStackFramesToSkip = 1;
+#endif
 
 	memset(callstack, 0, sizeof(void*) * callstackLength);
 
@@ -2933,11 +2910,6 @@ void CSystem::ExecuteCommandLine()
 	}
 
 	//gEnv->pConsole->ExecuteString("sys_RestoreSpec test*"); // to get useful debugging information about current spec settings to the log file
-}
-
-void CSystem::DumpMemoryCoverage()
-{
-	m_MemoryFragmentationProfiler.DumpMemoryCoverage();
 }
 
 ITextModeConsole* CSystem::GetITextModeConsole()
@@ -3046,9 +3018,7 @@ void CSystem::UpdateUpdateTimes()
 	sUpdateTimes& sample = m_UpdateTimes[m_UpdateTimesIdx];
 	if (m_PhysThread)
 	{
-		static uint64 lastPhysTime = 0U;
 		static uint64 lastMainTime = 0U;
-		static uint64 lastYields = 0U;
 		static uint64 lastPhysWait = 0U;
 		uint64 physTime = 0, mainTime = 0;
 		uint32 yields = 0;
@@ -3295,8 +3265,10 @@ void CSystem::SetSystemGlobalState(const ESystemGlobalState systemGlobalState)
 	{
 		if (gEnv && gEnv->pTimer)
 		{
+#if !defined(EXCLUDE_NORMAL_LOG)
 			const CTimeValue endTime = gEnv->pTimer->GetAsyncTime();
 			const float numSeconds = endTime.GetDifferenceInSeconds(s_startTime);
+#endif
 			CryLog("SetGlobalState %d->%d '%s'->'%s' %3.1f seconds",
 			       m_systemGlobalState, systemGlobalState,
 			       CSystem::GetSystemGlobalStateName(m_systemGlobalState), CSystem::GetSystemGlobalStateName(systemGlobalState),
@@ -3317,8 +3289,12 @@ void CSystem::RegisterWindowMessageHandler(IWindowMessageHandler* pHandler)
 //////////////////////////////////////////////////////////////////////////
 void CSystem::UnregisterWindowMessageHandler(IWindowMessageHandler* pHandler)
 {
+#if defined(USE_CRY_ASSERT)
 	bool bRemoved = stl::find_and_erase(m_windowMessageHandlers, pHandler);
 	assert(pHandler && bRemoved && "This IWindowMessageHandler was not registered");
+#else
+	stl::find_and_erase(m_windowMessageHandlers, pHandler);
+#endif
 }
 
 //////////////////////////////////////////////////////////////////////////

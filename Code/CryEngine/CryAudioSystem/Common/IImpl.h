@@ -9,9 +9,6 @@ struct IRenderAuxGeom;
 
 namespace CryAudio
 {
-class CEvent;
-class CStandaloneFile;
-
 using DeviceId = uint8;
 
 namespace Impl
@@ -23,7 +20,6 @@ struct IListener;
 struct IObject;
 struct IParameterConnection;
 struct ISettingConnection;
-struct IStandaloneFileConnection;
 struct ISwitchStateConnection;
 struct ITriggerConnection;
 struct ITriggerInfo;
@@ -44,11 +40,10 @@ struct IImpl
 	/**
 	 * Initialize all internal components and the audio middleware.
 	 * @param objectPoolSize - Number of objects to preallocate storage for.
-	 * @param eventPoolSize - Number of events to preallocate storage for.
 	 * @return ERequestStatus::Success if the initialization was successful, ERequestStatus::Failure otherwise.
 	 * @see ShutDown
 	 */
-	virtual ERequestStatus Init(uint16 const objectPoolSize, uint16 const eventPoolSize) = 0;
+	virtual ERequestStatus Init(uint16 const objectPoolSize) = 0;
 
 	/**
 	 * Shuts down all of the internal components and the audio middleware.
@@ -83,10 +78,10 @@ struct IImpl
 	 * Pass an implementation specific XML node that contains information about the current parsed library.
 	 * Is called for each library that contains the node, before calling Init.
 	 * @param pNode - an XML node containing information about the current parsed library
-	 * @param isLevelSpecific - false: the library is global. true: the library is level specific.
+	 * @param contextId - context id of the library.
 	 * @return void
 	 */
-	virtual void SetLibraryData(XmlNodeRef const pNode, bool const isLevelSpecific) = 0;
+	virtual void SetLibraryData(XmlNodeRef const pNode, ContextId const contextId) = 0;
 
 	/**
 	 * Called before parsing all libraries for impl data.
@@ -97,10 +92,11 @@ struct IImpl
 
 	/**
 	 * Called when parsing all libraries for impl data is finished.
+	 * @param poolAllocationMode - if 0: Accumulate pool sizes of all contexts. If 1: Accumulate pool sizes of the global context and the largest pool size for each control in any other context.
 	 * @see OnBeforeLibraryDataChanged, SetLibraryData
 	 * @return void
 	 */
-	virtual void OnAfterLibraryDataChanged() = 0;
+	virtual void OnAfterLibraryDataChanged(int const poolAllocationMode) = 0;
 
 	/**
 	 * This method is called every time the main Game (or Editor) window loses focus.
@@ -152,35 +148,20 @@ struct IImpl
 	virtual ERequestStatus StopAllSounds() = 0;
 
 	/**
-	 * Sets a parameter on all objects.
-	 * @param pIParameter - Parameter to set
-	 * @param value - Value to set
-	 * @return void
-	 */
-	virtual void SetGlobalParameter(IParameterConnection* const pIParameterConnection, float const value) = 0;
-
-	/**
-	 * Sets a switch state on all objects.
-	 * @param pISwitchStateConnection - Switch state to set
-	 * @return void
-	 */
-	virtual void SetGlobalSwitchState(ISwitchStateConnection* const pISwitchStateConnection) = 0;
-
-	/**
 	 * Inform the audio middleware about the memory location of a preloaded audio-data file
 	 * @param pFileInfo - audio system-specific information describing the resources used by the preloaded file being reported
-	 * @return ERequestStatus::Success if the audio middleware is able to use the preloaded file, ERequestStatus::Failure otherwise
+	 * @return void
 	 * @see UnregisterInMemoryFile
 	 */
-	virtual ERequestStatus RegisterInMemoryFile(SFileInfo* const pFileInfo) = 0;
+	virtual void RegisterInMemoryFile(SFileInfo* const pFileInfo) = 0;
 
 	/**
 	 * Inform the audio middleware that the memory containing the preloaded audio-data file should no longer be used
 	 * @param pFileInfo - audio system-specific information describing the resources used by the preloaded file being invalidated
-	 * @return ERequestStatus::Success if the audio middleware was able to unregister the preloaded file supplied, ERequestStatus::Failure otherwise
+	 * @return void
 	 * @see RegisterInMemoryFile
 	 */
-	virtual ERequestStatus UnregisterInMemoryFile(SFileInfo* const pFileInfo) = 0;
+	virtual void UnregisterInMemoryFile(SFileInfo* const pFileInfo) = 0;
 
 	/**
 	 * Parse the implementation-specific XML node that represents an audio file, fill the fields of the struct
@@ -237,28 +218,6 @@ struct IImpl
 	 * @see ConstructTrigger
 	 */
 	virtual void DestructTriggerConnection(ITriggerConnection const* const pITriggerConnection) = 0;
-
-	/**
-	 * Create an object implementing ConstructStandaloneFile that stores all of the data needed by the AudioImplementation
-	 * to identify and use an audio standalone file. Return a pointer to that object.
-	 * @param standaloneFile - reference to the CStandaloneFile associated with the IStandaloneFile object we want to construct. It's used as an ID to link the two objects.
-	 * @param szFile - full path to the file that wants to be played
-	 * @param bLocalized - is the file specified in szFile localized or not
-	 * @param pITriggerConnection - if set, routes the playing of the audio file through the specified implementation trigger
-	 * @return IStandaloneFile pointer to the audio implementation-specific data needed by the audio middleware and the
-	 * @return AudioImplementation code to use the corresponding audio standalone file.
-	 * @return nullptr if the new IStandaloneFileConnection instance was not created.
-	 * @see DestructStandaloneFile
-	 */
-	virtual IStandaloneFileConnection* ConstructStandaloneFileConnection(CStandaloneFile& standaloneFile, char const* const szFile, bool const bLocalized, ITriggerConnection const* pITriggerConnection = nullptr) = 0;
-
-	/**
-	 * Free the memory and potentially other resources used by the supplied IStandaloneFileConnection instance
-	 * @param pIStandaloneFileConnection - pointer to the object implementing IStandaloneFileConnection to be discarded
-	 * @return void
-	 * @see ConstructStandaloneFile
-	 */
-	virtual void DestructStandaloneFileConnection(IStandaloneFileConnection const* const pIStandaloneFileConnection) = 0;
 
 	/**
 	 * Parse the implementation-specific XML node that represents an IParameterConnection, return a pointer to the data needed for identifying
@@ -380,24 +339,6 @@ struct IImpl
 	virtual void DestructListener(IListener* const pIListener) = 0;
 
 	/**
-	 * Create an object implementing IEvent that stores all of the data needed by the AudioImplementation
-	 * to identify and use an AudioEvent. Return a pointer to that object.
-	 * @param event - implementation event associated with the newly created AudioEvent
-	 * @return IEvent pointer to the audio implementation-specific data needed by the audio middleware and the
-	 * @return AudioImplementation code to use the corresponding AudioEvent; nullptr if the new IEvent instance was not created
-	 * @see DestructEvent
-	 */
-	virtual IEvent* ConstructEvent(CEvent& event) = 0;
-
-	/**
-	 * Free the memory and potentially other resources used by the supplied IEvent instance
-	 * @param pIEvent - pointer to the object implementing IEvent to be discarded
-	 * @return void
-	 * @see ConstructEvent
-	 */
-	virtual void DestructEvent(IEvent const* const pIEvent) = 0;
-
-	/**
 	 * Called whenever a Gamepad gets connected.
 	 * This is used by audio middleware that supports controller effects such as rumble.
 	 * @param deviceUniqueID - unique device identifier
@@ -437,23 +378,25 @@ struct IImpl
 	//////////////////////////////////////////////////////////////////////////
 
 	/**
-	 * Asks the audio implementation to fill the fileData structure with data (e.g. duration of track) relating to the
-	 * standalone file referenced in szName.
-	 * @param[in] szName - filepath to the standalone file
-	 * @param[out] fileData - a reference to an instance of SAudioFileData
-	 * @return void
-	 */
-	virtual void GetFileData(char const* const szName, SFileData& fileData) const = 0;
-
-	/**
-	 * Informs the audio middlware that it can draw its debug information.
+	 * Informs the audio middlware that it can draw its memory debug information in the debug header.
 	 * @param[out] auxGeom - a reference to the IRenderAuxGeom that draws the debug info.
 	 * @param[in] posX - x-axis position of the auxGeom.
 	 * @param[out] posY - y-axis position of the auxGeom.
-	 * @param[in] showDetailedInfo - should detailed memory info be shown or not.
+	 * @param[in] drawDetailedInfo - should detailed memory info be drawn or not.
 	 * @return void
 	 */
-	virtual void DrawDebugInfo(IRenderAuxGeom& auxGeom, float const posX, float& posY, bool const showDetailedInfo) = 0;
+	virtual void DrawDebugMemoryInfo(IRenderAuxGeom& auxGeom, float const posX, float& posY, bool const drawDetailedInfo) = 0;
+
+	/**
+	 * Informs the audio middlware that it can draw debug information below the debug header in form of a list or multiple lists, e.g events.
+	 * @param[out] auxGeom - a reference to the IRenderAuxGeom that draws the debug info.
+	 * @param[out] posX - x-axis position of the auxGeom. Has to be increased by the width of the list(s) to avoid overlapping with other debug info.
+	 * @param[in] posY - y-axis position of the auxGeom.
+	 * @param[in] debugDistance - distance from the listener to where object debug is drawn. Is <= 0 if filtering is disabled.
+	 * @param[in] szTextFilter - current set text filter. Is nullptr if filtering is disabled.
+	 * @return void
+	 */
+	virtual void DrawDebugInfoList(IRenderAuxGeom& auxGeom, float& posX, float posY, float const debugDistance, char const* const szTextFilter) const = 0;
 };
 } // namespace Impl
 } // namespace CryAudio

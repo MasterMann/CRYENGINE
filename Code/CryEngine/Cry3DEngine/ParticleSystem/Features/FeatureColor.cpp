@@ -97,7 +97,7 @@ private:
 	template<bool doLuminance, bool doRGB>
 	void DoModify(const CParticleComponentRuntime& runtime, const SUpdateRange& range, IOColorStream stream) const
 	{
-		SChaosKeyV::Range randRange(1.0f - m_luminance, 1.0f);
+		auto randRange = SChaosKeyV::Range(1.0f - m_luminance, 1.0f);
 		floatv rgb = ToFloatv(m_rgb),
 		       unrgb = ToFloatv(1.0f - m_rgb);
 
@@ -106,7 +106,7 @@ private:
 			Vec3v color = ToVec3v(stream.Load(particleGroupId));
 			if (doLuminance)
 			{
-				const floatv lum = runtime.ChaosV().Rand(randRange);
+				const floatv lum = runtime.ChaosV()(randRange);
 				color = color * lum;
 			}
 			if (doRGB)
@@ -256,7 +256,7 @@ class CColorInherit : public IColorFieldModifier
 public:
 	virtual EDataDomain GetDomain() const
 	{
-		return m_spawnOnly ? EDD_PerInstance : EDD_InstanceUpdate;
+		return m_spawnOnly ? EDD_Spawner : EDD_SpawnerUpdate;
 	}
 
 	virtual void Serialize(Serialization::IArchive& ar)

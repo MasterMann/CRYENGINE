@@ -304,12 +304,6 @@ CHWShader* CHWShader::mfForName(const char* name, const char* nameSource, uint32
 			{
 				if (SHData.size())
 				{
-					char strName[256];
-#if defined(CRY_COMPILER_GCC) || defined(CRY_COMPILER_CLANG)
-					cry_sprintf(strName, "$MAP_%llx", pSH->m_nMaskGenShader);
-#else
-					cry_sprintf(strName, "$MAP_%I64x", pSH->m_nMaskGenShader);
-#endif
 					pSH->mfStoreCacheTokenMap(Table, SHData);
 				}
 			}
@@ -428,7 +422,6 @@ uint64 CHWShader_D3D::CheckIfExpr_r(const uint32* pTokens, uint32& nCur, uint32 
 
 	while (nCur < nSize)
 	{
-		int nRecurs = 0;
 		uint32 nToken = pTokens[nCur++];
 		if (nToken == eT_br_rnd_1) // check for '('
 		{
@@ -563,12 +556,6 @@ void CHWShader_D3D::mfConstructFX(const FXShaderToken& Table, const TArray<uint3
 	{
 		if (SHData.size())
 		{
-			char strName[256];
-#if defined(CRY_COMPILER_GCC) || defined(CRY_COMPILER_CLANG)
-			cry_sprintf(strName, "$MAP_%llx", m_nMaskGenShader);
-#else
-			cry_sprintf(strName, "$MAP_%I64x", m_nMaskGenShader);
-#endif
 			mfStoreCacheTokenMap(Table, SHData);
 		}
 	}
@@ -577,7 +564,6 @@ void CHWShader_D3D::mfConstructFX(const FXShaderToken& Table, const TArray<uint3
 CHWShader_D3D::cacheValidationResult CHWShader_D3D::mfValidateCache(const SDiskShaderCache &cache)
 {
 	static constexpr auto fVersion = static_cast<float>(FX_CACHE_VER);
-	const auto cacheType = cache.GetType();
 
 	const SResFileLookupData* pLookup = cache.m_pRes->GetLookupData();
 	if (!pLookup)
@@ -793,8 +779,7 @@ void CHWShader_D3D::mfPrecacheAllCombinations(CShader* pFX, CResFileOpenScope &r
 		const auto devCacheKey = static_cast<SHWShaderCache::deviceShaderCacheKey>(name);
 
 		// Already exists or invalid
-		if (!shaderEntry.IsValid() || 
-			(shaderEntry.GetFlags() & (RF_RES_$TOKENS | RF_RES_$)))
+		if (!shaderEntry.IsValid())
 			continue;
 
 		// Store duplicates for later and continue
@@ -967,7 +952,6 @@ int CGParamManager::GetParametersGroup(SParamsGroup& InGr, int nId)
 	}
 	else if (nId == 1)
 	{
-		SCGParam& Pr = InParams[0];
 		bGeneral = false;
 	}
 	s_Groups[n].bGeneral = bGeneral;
@@ -1072,26 +1056,15 @@ NO_INLINE void sGetScreenSize(UFloat4* sData, CD3D9Renderer* r)
 
 NO_INLINE void sGetIrregKernel(UFloat4* sData, CD3D9Renderer* r)
 {
-	int nSamplesNum = 1;
-	switch (gRenDev->GetRenderQuality().shaderQuality)
+	const EShaderQuality shaderQuality = gRenDev->m_cEF.m_ShaderProfiles[eST_Shadow].GetShaderQuality();
+	constexpr int32 sampleCountByQuality[eSQ_Max] =
 	{
-	case eSQ_Low:
-		nSamplesNum = 4;
-		break;
-	case eSQ_Medium:
-		nSamplesNum = 8;
-		break;
-	case eSQ_High:
-		nSamplesNum = 16;
-		break;
-	case eSQ_VeryHigh:
-		nSamplesNum = 16;
-		break;
-	default:
-		assert(0);
-	}
-
-	CShadowUtils::GetIrregKernel((float(*)[4]) & sData[0], nSamplesNum);
+		4,  // eSQ_Low
+		8,  // eSQ_Medium
+		16, // eSQ_High
+		16, // eSQ_VeryHigh
+	};
+	CShadowUtils::GetIrregKernel((float(*)[4]) & sData[0], sampleCountByQuality[shaderQuality]);
 }
 
 NO_INLINE void sGetRegularKernel(UFloat4* sData, CD3D9Renderer* r)
@@ -1124,9 +1097,7 @@ NO_INLINE void sGetRegularKernel(UFloat4* sData, CD3D9Renderer* r)
 		else
 		{
 			sData[nInd / 2].f[2] = regular_kernel[nInd].x * fFilterRange;
-			;
 			sData[nInd / 2].f[3] = regular_kernel[nInd].y * fFilterRange;
-			;
 		}
 	}
 }
@@ -1517,7 +1488,7 @@ void CRenderer::ReadPerFrameShaderConstants(const SRenderingPassInfo& passInfo, 
 	// Per frame - hardcoded/fast - update of commonly used data - feel free to improve this
 	CRenderView* pRenderView = passInfo.GetRenderView();
 
-	SRenderViewShaderConstants& PF = pRenderView->GetShaderConstants();;
+	SRenderViewShaderConstants& PF = pRenderView->GetShaderConstants();
 	uint32 nFrameID = passInfo.GetFrameID();
 	if (PF.nFrameID == nFrameID)
 		return;
@@ -1763,7 +1734,6 @@ void CHWShader_D3D::mfSetParameters(SCGParam* pParams, const int nINParams, EHWS
 	Vec4 v4;
 	const SCGParam* ParamBind = pParams;
 	int nParams;
-	const int rLog = CRenderer::CV_r_log;
 
 	if (!pParams)
 		return;
@@ -2417,7 +2387,6 @@ CHWShader_D3D::SHWSInstance* CHWShader_D3D::mfGetInstance(SShaderCombIdent& Iden
 		s_nInstFrame++;
 		pInst->m_Ident = Ident;
 		pInst->m_eClass = m_eSHClass;
-		size_t i = std::distance(pInstCont->begin(), it);
 		pInstCont->insert(it, pInst);
 		if (nFlags & HWSF_FAKE)
 			pInst->m_Handle.SetFake();

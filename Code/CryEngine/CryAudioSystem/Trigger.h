@@ -8,8 +8,7 @@
 
 namespace CryAudio
 {
-class CObject;
-struct STriggerInstanceState;
+class CTriggerInstance;
 
 class CTrigger final : public Control, public CPoolObject<CTrigger, stl::PSyncNone>
 {
@@ -21,26 +20,26 @@ public:
 	CTrigger& operator=(CTrigger const&) = delete;
 	CTrigger& operator=(CTrigger&&) = delete;
 
-#if defined(INCLUDE_AUDIO_PRODUCTION_CODE)
+#if defined(CRY_AUDIO_USE_DEBUG_CODE)
 	explicit CTrigger(
 		ControlId const id,
-		EDataScope const dataScope,
+		ContextId const contextId,
 		TriggerConnections const& connections,
 		float const radius,
 		char const* const szName)
-		: Control(id, dataScope, szName)
+		: Control(id, contextId, szName)
 		, m_connections(connections)
 		, m_radius(radius)
 	{}
 #else
 	explicit CTrigger(
 		ControlId const id,
-		EDataScope const dataScope,
+		ContextId const contextId,
 		TriggerConnections const& connections)
-		: Control(id, dataScope)
+		: Control(id, contextId)
 		, m_connections(connections)
 	{}
-#endif // INCLUDE_AUDIO_PRODUCTION_CODE
+#endif // CRY_AUDIO_USE_DEBUG_CODE
 
 	~CTrigger();
 
@@ -50,30 +49,38 @@ public:
 		void* const pUserData = nullptr,
 		void* const pUserDataOwner = nullptr,
 		ERequestFlags const flags = ERequestFlags::None) const;
+
+	void Execute(
+		CGlobalObject& globalObject,
+		void* const pOwner = nullptr,
+		void* const pUserData = nullptr,
+		void* const pUserDataOwner = nullptr,
+		ERequestFlags const flags = ERequestFlags::None) const;
+
+	void Stop(Impl::IObject* const pIObject) const;
+
+#if defined(CRY_AUDIO_USE_DEBUG_CODE)
 	void Execute(
 		CObject& object,
 		TriggerInstanceId const triggerInstanceId,
-		STriggerInstanceState& triggerInstanceState) const;
-	void LoadAsync(CObject& object, bool const doLoad) const;
-	void PlayFile(
-		CObject& object,
-		char const* const szName,
-		bool const isLocalized,
-		void* const pOwner = nullptr,
-		void* const pUserData = nullptr,
-		void* const pUserDataOwner = nullptr) const;
+		CTriggerInstance* const pTriggerInstance,
+		uint16 const triggerCounter) const;
 
-#if defined(INCLUDE_AUDIO_PRODUCTION_CODE)
+	void Execute(
+		CGlobalObject& globalObject,
+		TriggerInstanceId const triggerInstanceId,
+		CTriggerInstance* const pTriggerInstance,
+		uint16 const triggerCounter) const;
+
 	float GetRadius() const { return m_radius; }
-	void  PlayFile(CObject& object, CStandaloneFile* const pFile) const;
-#endif // INCLUDE_AUDIO_PRODUCTION_CODE
+#endif // CRY_AUDIO_USE_DEBUG_CODE
 
 private:
 
 	TriggerConnections const m_connections;
 
-#if defined(INCLUDE_AUDIO_PRODUCTION_CODE)
+#if defined(CRY_AUDIO_USE_DEBUG_CODE)
 	float const m_radius;
-#endif // INCLUDE_AUDIO_PRODUCTION_CODE
+#endif // CRY_AUDIO_USE_DEBUG_CODE
 };
 } // namespace CryAudio

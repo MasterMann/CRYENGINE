@@ -10,7 +10,6 @@
 #include <CryAudio/IListener.h>
 #include <CryAudio/IAudioSystem.h>
 #include <CryPhysics/IPhysics.h>
-#include <CryRenderer/RenderElements/CRESky.h>
 #include <Cry3DEngine/I3DEngine.h>
 #include <Cry3DEngine/IStatObj.h>
 #include <CryAnimation/IAttachment.h>
@@ -69,9 +68,6 @@ CModelViewport::CModelViewport(const char* settingsPath)
 
 	m_weaponIK = false;
 
-	m_pRESky = 0;
-	m_pSkyboxName = 0;
-	m_pSkyBoxShader = NULL;
 	m_pPhysicalEntity = NULL;
 
 	m_attachBone = "weapon_bone";
@@ -167,7 +163,6 @@ CModelViewport::CModelViewport(const char* settingsPath)
 	if (GetIEditor()->IsInPreviewMode())
 	{
 		// In preview mode create a simple physical grid, so we can register physical entities.
-		int nCellSize = 4;
 		IPhysicalWorld* pPhysWorld = gEnv->pPhysicalWorld;
 		if (pPhysWorld)
 		{
@@ -185,7 +180,6 @@ CModelViewport::CModelViewport(const char* settingsPath)
 	if (gEnv->pInput)
 	{
 		gEnv->pInput->AddEventListener(this);
-		uint32 test = gEnv->pInput->HasInputDeviceOfType(eIDT_Gamepad);
 	}
 
 	m_pIAudioListener = gEnv->pAudioSystem->CreateListener(m_viewTM);
@@ -579,17 +573,6 @@ void CModelViewport::OnRender(SDisplayContext& context)
 	}
 }
 
-void CModelViewport::DrawSkyBox(const SRenderingPassInfo& passInfo)
-{
-	CRenderObject* pObj = passInfo.GetIRenderView()->AllocateTemporaryRenderObject();
-	pObj->SetMatrix(Matrix34::CreateTranslationMat(GetViewTM().GetTranslation()), passInfo);
-
-	if (m_pSkyboxName)
-	{
-		passInfo.GetIRenderView()->AddRenderObject(m_pRESky, SShaderItem(m_pSkyBoxShader), pObj, passInfo, EFSLIST_GENERAL, 1);
-	}
-}
-
 void CModelViewport::OnLButtonDblClk(UINT nFlags, CPoint point)
 {
 	// TODO: Add your message handler code here and/or call default
@@ -731,8 +714,6 @@ void CModelViewport::OnShowShaders(IVariable* var)
 void CModelViewport::OnDestroy()
 {
 	ReleaseObject();
-	if (m_pRESky)
-		m_pRESky->Release(false);
 }
 
 void CModelViewport::Update()

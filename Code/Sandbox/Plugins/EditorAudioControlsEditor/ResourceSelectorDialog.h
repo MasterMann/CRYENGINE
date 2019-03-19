@@ -2,7 +2,7 @@
 
 #pragma once
 
-#include "Common/SharedData.h"
+#include "Common.h"
 #include <Controls/EditorDialog.h>
 
 class QSearchBox;
@@ -25,20 +25,25 @@ class CResourceSelectorDialog final : public CEditorDialog
 
 public:
 
+	struct SResourceSelectionDialogResult final
+	{
+		string selectedItem;
+		bool   selectionAccepted;
+	};
+
 	CResourceSelectorDialog() = delete;
 	CResourceSelectorDialog(CResourceSelectorDialog const&) = delete;
 	CResourceSelectorDialog(CResourceSelectorDialog&&) = delete;
 	CResourceSelectorDialog& operator=(CResourceSelectorDialog const&) = delete;
 	CResourceSelectorDialog& operator=(CResourceSelectorDialog&&) = delete;
 
-	explicit CResourceSelectorDialog(EAssetType const type, Scope const scope, QWidget* const pParent);
+	explicit CResourceSelectorDialog(EAssetType const type, bool const isSwitchAndState, QWidget* const pParent);
 	virtual ~CResourceSelectorDialog() override;
 
-	char const* ChooseItem(char const* currentValue);
+	//! Returns if the operation was accepted or not. If the operation was accepted the newly selected item is in selectedItem. If the operation was canceled selectedItem will be set to szCurrentValue
+	SResourceSelectionDialogResult ChooseItem(char const* szCurrentValue);
 
-	// QDialog
-	virtual QSize sizeHint() const override;
-	// ~QDialog
+	virtual QSize                  sizeHint() const override;
 
 private slots:
 
@@ -49,17 +54,17 @@ private slots:
 
 private:
 
-	QModelIndex         FindItem(string const& sControlName);
+	QModelIndex         FindItem(string const& controlName);
 	QAbstractItemModel* CreateLibraryModelFromIndex(QModelIndex const& sourceIndex);
 	void                DeleteModels();
+	string              GetSwitchStateNameFromState(string const& stateName);
 
 	// QDialog
 	virtual bool eventFilter(QObject* pObject, QEvent* pEvent) override;
 	// ~QDialog
 
 	EAssetType const                    m_type;
-	Scope const                         m_scope;
-	bool                                m_selectionIsValid = false;
+	bool                                m_selectionIsValid;
 
 	QSearchBox* const                   m_pSearchBox;
 	CTreeView* const                    m_pTreeView;
@@ -71,5 +76,6 @@ private:
 
 	static string                       s_previousControlName;
 	static EAssetType                   s_previousControlType;
+	static bool                         s_isSwitchAndState;
 };
 } // namespace ACE

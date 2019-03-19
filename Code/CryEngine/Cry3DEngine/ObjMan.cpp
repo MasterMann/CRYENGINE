@@ -532,7 +532,7 @@ class CStatObjAsyncLoader : IStatObjLoadedCallback
 {
 public:
 	CStatObjAsyncLoader(CStatObj* pObject, uint32 loadingFlags, const char* szGeomName, IStatObjFoundCallback* pCallback) :
-		m_pObject(pObject), m_pCallback(pCallback), m_geomName(szGeomName), m_loadingFlags(loadingFlags)
+		m_pObject(pObject), m_pCallback(pCallback), m_geomName(szGeomName), m_loadingFlags(loadingFlags), m_lodLoadingStarted(false), m_useStreaming(false)
 	{
 		if (s_pStreamEngine == nullptr)
 			s_pStreamEngine = gEnv->pSystem->GetStreamEngine();
@@ -771,7 +771,9 @@ CObjManager::CObjManager() :
 	m_pDefaultCGF(NULL),
 	m_decalsToPrecreate(),
 	m_bNeedProcessObjectsStreaming_Finish(false),
-	m_CullThread()
+	m_CullThread(),
+	m_CheckOcclusionOutputQueue(GetCVars()->e_CheckOcclusionOutputQueueSize)
+
 {
 #ifdef POOL_STATOBJ_ALLOCS
 	m_statObjPool = new stl::PoolAllocator<sizeof(CStatObj), stl::PSyncMultiThread, alignof(CStatObj)>(stl::FHeap().PageSize(64)); // 20Kb per page
@@ -822,10 +824,6 @@ CObjManager::CObjManager() :
 	m_bGarbageCollectionEnabled = true;
 
 	m_decalsToPrecreate.reserve(128);
-
-	// init queue for check occlusion
-	m_CheckOcclusionQueue.Init(GetCVars()->e_CheckOcclusionQueueSize);
-	m_CheckOcclusionOutputQueue.Init(GetCVars()->e_CheckOcclusionOutputQueueSize);
 }
 
 // make unit box for occlusion test

@@ -1,22 +1,19 @@
 // Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "stdafx.h"
-#include "Managers.h"
-#include "EventManager.h"
-#include "FileManager.h"
-#include "Object.h"
-#include "Event.h"
 #include "Trigger.h"
-#include "StandaloneFile.h"
-#include "Common/IEvent.h"
+#include "Managers.h"
+#include "Object.h"
+#include "GlobalObject.h"
+#include "TriggerInstance.h"
+#include "TriggerUtils.h"
 #include "Common/IImpl.h"
 #include "Common/IObject.h"
-#include "Common/IStandaloneFileConnection.h"
 #include "Common/ITriggerConnection.h"
 
-#if defined(INCLUDE_AUDIO_PRODUCTION_CODE)
+#if defined(CRY_AUDIO_USE_DEBUG_CODE)
 	#include "Common/Logger.h"
-#endif  // INCLUDE_AUDIO_PRODUCTION_CODE
+#endif  // CRY_AUDIO_USE_DEBUG_CODE
 
 namespace CryAudio
 {
@@ -39,283 +36,237 @@ void CTrigger::Execute(
 	void* const pUserDataOwner /* = nullptr */,
 	ERequestFlags const flags /* = ERequestFlags::None */) const
 {
-	object.UpdateOcclusion();
+	Impl::IObject* const pIObject = object.GetImplDataPtr();
 
-	STriggerInstanceState triggerInstanceState;
-	triggerInstanceState.triggerId = GetId();
-	triggerInstanceState.pOwnerOverride = pOwner;
-	triggerInstanceState.pUserData = pUserData;
-	triggerInstanceState.pUserDataOwner = pUserDataOwner;
-
-	if ((flags& ERequestFlags::DoneCallbackOnAudioThread) != 0)
-	{
-		triggerInstanceState.flags |= ETriggerStatus::CallbackOnAudioThread;
-	}
-	else if ((flags& ERequestFlags::DoneCallbackOnExternalThread) != 0)
-	{
-		triggerInstanceState.flags |= ETriggerStatus::CallbackOnExternalThread;
-	}
+	bool isPlaying = false;
+	uint16 numPlayingInstances = 0;
+	uint16 numPendingInstances = 0;
 
 	for (auto const pConnection : m_connections)
 	{
-		CEvent* const pEvent = g_eventManager.ConstructEvent();
-		ERequestStatus const activateResult = pConnection->Execute(object.GetImplDataPtr(), pEvent->m_pImplData);
+		ETriggerResult const result = pConnection->Execute(pIObject, g_triggerInstanceIdCounter);
 
-		if ((activateResult == ERequestStatus::Success) || (activateResult == ERequestStatus::SuccessVirtual) || (activateResult == ERequestStatus::Pending))
+		if ((result == ETriggerResult::Playing) || (result == ETriggerResult::Virtual) || (result == ETriggerResult::Pending))
 		{
-#if defined(INCLUDE_AUDIO_PRODUCTION_CODE)
-			pEvent->SetTriggerName(GetName());
-			pEvent->SetTriggerRadius(m_radius);
-#endif  // INCLUDE_AUDIO_PRODUCTION_CODE
-
-			pEvent->m_pObject = &object;
-			pEvent->SetTriggerId(GetId());
-			pEvent->m_triggerInstanceId = g_triggerInstanceIdCounter;
-
-			if (activateResult == ERequestStatus::Success)
+			if (result == ETriggerResult::Playing)
 			{
-				pEvent->SetPlaying();
-				++(triggerInstanceState.numPlayingEvents);
+				++numPlayingInstances;
+				isPlaying = true;
 			}
-			else if (activateResult == ERequestStatus::SuccessVirtual)
+			else if (result == ETriggerResult::Virtual)
 			{
-				pEvent->SetVirtual();
-				++(triggerInstanceState.numPlayingEvents);
+				++numPlayingInstances;
 			}
-			else if (activateResult == ERequestStatus::Pending)
+			else
 			{
-				pEvent->m_state = EEventState::Loading;
-				++(triggerInstanceState.numLoadingEvents);
+				++numPendingInstances;
 			}
-
-			object.AddEvent(pEvent);
 		}
-		else
+#if defined(CRY_AUDIO_USE_DEBUG_CODE)
+		else if (result != ETriggerResult::DoNotTrack)
 		{
-			g_eventManager.DestructEvent(pEvent);
-
-#if defined(INCLUDE_AUDIO_PRODUCTION_CODE)
-			if (activateResult != ERequestStatus::SuccessDoNotTrack)
-			{
-				// No TriggerImpl generated an active event.
-				Cry::Audio::Log(ELogType::Warning, R"(Trigger "%s" failed on object "%s")", GetName(), object.m_name.c_str());
-			}
-#endif  // INCLUDE_AUDIO_PRODUCTION_CODE
+			Cry::Audio::Log(ELogType::Warning, R"(Trigger "%s" failed on object "%s" during %s)", GetName(), object.GetName(), __FUNCTION__);
 		}
+#endif  // CRY_AUDIO_USE_DEBUG_CODE
 	}
 
-	if (triggerInstanceState.numPlayingEvents > 0 || triggerInstanceState.numLoadingEvents > 0)
+	if ((numPlayingInstances > 0) || (numPendingInstances > 0))
 	{
-		triggerInstanceState.flags |= ETriggerStatus::Playing;
-		object.AddTriggerState(g_triggerInstanceIdCounter++, triggerInstanceState);
+		if (isPlaying)
+		{
+			object.RemoveFlag(EObjectFlags::Virtual);
+		}
+		else if ((object.GetFlags() & EObjectFlags::Active) == 0)
+		{
+			// Only when no trigger was active before, the object can get set to virtual here.
+			object.SetFlag(EObjectFlags::Virtual);
+		}
+
+#if defined(CRY_AUDIO_USE_DEBUG_CODE)
+		object.ConstructTriggerInstance(m_id, numPlayingInstances, numPendingInstances, flags, pOwner, pUserData, pUserDataOwner, m_radius);
+#else
+		object.ConstructTriggerInstance(m_id, numPlayingInstances, numPendingInstances, flags, pOwner, pUserData, pUserDataOwner);
+#endif    // CRY_AUDIO_USE_DEBUG_CODE
 	}
 	else
 	{
 		// All of the events have either finished before we got here or never started, immediately inform the user that the trigger has finished.
-		object.SendFinishedTriggerInstanceRequest(triggerInstanceState);
+		SendFinishedTriggerInstanceRequest(m_id, object.GetEntityId(), flags, pOwner, pUserData, pUserDataOwner);
 	}
 
-#if defined(INCLUDE_AUDIO_PRODUCTION_CODE)
+#if defined(CRY_AUDIO_USE_DEBUG_CODE)
 	if (m_connections.empty())
 	{
-		Cry::Audio::Log(ELogType::Warning, R"(Trigger "%s" executed on object "%s" without connections)", GetName(), object.m_name.c_str());
+		Cry::Audio::Log(ELogType::Warning, R"(Trigger "%s" executed on object "%s" without connections)", GetName(), object.GetName());
 	}
-#endif // INCLUDE_AUDIO_PRODUCTION_CODE
+#endif // CRY_AUDIO_USE_DEBUG_CODE
 }
 
 //////////////////////////////////////////////////////////////////////////
 void CTrigger::Execute(
-	CObject& object,
-	TriggerInstanceId const triggerInstanceId,
-	STriggerInstanceState& triggerInstanceState) const
-{
-	object.UpdateOcclusion();
-
-	for (auto const pConnection : m_connections)
-	{
-		CEvent* const pEvent = g_eventManager.ConstructEvent();
-		ERequestStatus const activateResult = pConnection->Execute(object.GetImplDataPtr(), pEvent->m_pImplData);
-
-		if ((activateResult == ERequestStatus::Success) || (activateResult == ERequestStatus::SuccessVirtual) || (activateResult == ERequestStatus::Pending))
-		{
-#if defined(INCLUDE_AUDIO_PRODUCTION_CODE)
-			pEvent->SetTriggerName(GetName());
-			pEvent->SetTriggerRadius(m_radius);
-#endif  // INCLUDE_AUDIO_PRODUCTION_CODE
-
-			pEvent->m_pObject = &object;
-			pEvent->SetTriggerId(GetId());
-			pEvent->m_triggerInstanceId = triggerInstanceId;
-
-			if (activateResult == ERequestStatus::Success)
-			{
-				pEvent->SetPlaying();
-				++(triggerInstanceState.numPlayingEvents);
-			}
-			else if (activateResult == ERequestStatus::SuccessVirtual)
-			{
-				pEvent->SetVirtual();
-				++(triggerInstanceState.numPlayingEvents);
-			}
-			else if (activateResult == ERequestStatus::Pending)
-			{
-				pEvent->m_state = EEventState::Loading;
-				++(triggerInstanceState.numLoadingEvents);
-			}
-
-			object.AddEvent(pEvent);
-		}
-		else
-		{
-			g_eventManager.DestructEvent(pEvent);
-
-#if defined(INCLUDE_AUDIO_PRODUCTION_CODE)
-			if (activateResult != ERequestStatus::SuccessDoNotTrack)
-			{
-				// No TriggerImpl generated an active event.
-				Cry::Audio::Log(ELogType::Warning, R"(Trigger "%s" failed on object "%s")", GetName(), object.m_name.c_str());
-			}
-#endif  // INCLUDE_AUDIO_PRODUCTION_CODE
-		}
-	}
-
-#if defined(INCLUDE_AUDIO_PRODUCTION_CODE)
-	if (m_connections.empty())
-	{
-		Cry::Audio::Log(ELogType::Warning, R"(Trigger "%s" executed on object "%s" without connections)", GetName(), object.m_name.c_str());
-	}
-#endif // INCLUDE_AUDIO_PRODUCTION_CODE
-}
-
-//////////////////////////////////////////////////////////////////////////
-void CTrigger::LoadAsync(CObject& object, bool const doLoad) const
-{
-	// TODO: This needs proper implementation!
-	STriggerInstanceState triggerInstanceState;
-	triggerInstanceState.triggerId = GetId();
-
-	for (auto const pConnection : m_connections)
-	{
-		CEvent* const pEvent = g_eventManager.ConstructEvent();
-		ERequestStatus prepUnprepResult = ERequestStatus::Failure;
-
-		if (doLoad)
-		{
-			if (((triggerInstanceState.flags & ETriggerStatus::Loaded) == 0) && ((triggerInstanceState.flags & ETriggerStatus::Loading) == 0))
-			{
-				prepUnprepResult = pConnection->LoadAsync(pEvent->m_pImplData);
-			}
-		}
-		else
-		{
-			if (((triggerInstanceState.flags & ETriggerStatus::Loaded) != 0) && ((triggerInstanceState.flags & ETriggerStatus::Unloading) == 0))
-			{
-				prepUnprepResult = pConnection->UnloadAsync(pEvent->m_pImplData);
-			}
-		}
-
-		if (prepUnprepResult == ERequestStatus::Success)
-		{
-#if defined(INCLUDE_AUDIO_PRODUCTION_CODE)
-			pEvent->SetTriggerRadius(m_radius);
-#endif  // INCLUDE_AUDIO_PRODUCTION_CODE
-
-			pEvent->m_pObject = &object;
-			pEvent->SetTriggerId(GetId());
-			pEvent->m_triggerInstanceId = g_triggerInstanceIdCounter;
-			pEvent->m_state = doLoad ? EEventState::Loading : EEventState::Unloading;
-
-			object.AddEvent(pEvent);
-		}
-		else
-		{
-			g_eventManager.DestructEvent(pEvent);
-
-#if defined(INCLUDE_AUDIO_PRODUCTION_CODE)
-			Cry::Audio::Log(ELogType::Warning, R"(LoadAsync failed on trigger "%s" for object "%s")", GetName(), object.m_name.c_str());
-#endif  // INCLUDE_AUDIO_PRODUCTION_CODE
-		}
-	}
-
-	object.AddTriggerState(g_triggerInstanceIdCounter++, triggerInstanceState);
-}
-
-//////////////////////////////////////////////////////////////////////////
-void CTrigger::PlayFile(
-	CObject& object,
-	char const* const szName,
-	bool const isLocalized,
+	CGlobalObject& globalObject,
 	void* const pOwner /* = nullptr */,
 	void* const pUserData /* = nullptr */,
-	void* const pUserDataOwner /* = nullptr */) const
+	void* const pUserDataOwner /* = nullptr */,
+	ERequestFlags const flags /* = ERequestFlags::None */) const
 {
-	if (!m_connections.empty())
+	Impl::IObject* const pIObject = globalObject.GetImplDataPtr();
+
+	uint16 numPlayingInstances = 0;
+	uint16 numPendingInstances = 0;
+
+	for (auto const pConnection : m_connections)
 	{
-		Impl::ITriggerConnection const* const pITriggerConnection = m_connections[0];
-		CStandaloneFile* const pFile = g_fileManager.ConstructStandaloneFile(szName, isLocalized, pITriggerConnection);
-		ERequestStatus const status = pFile->m_pImplData->Play(object.GetImplDataPtr());
+		ETriggerResult const result = pConnection->Execute(pIObject, g_triggerInstanceIdCounter);
 
-		if (status == ERequestStatus::Success || status == ERequestStatus::Pending)
+		if ((result == ETriggerResult::Playing) || (result == ETriggerResult::Virtual) || (result == ETriggerResult::Pending))
 		{
-			if (status == ERequestStatus::Success)
+			if (result != ETriggerResult::Pending)
 			{
-				pFile->m_state = EStandaloneFileState::Playing;
+				++numPlayingInstances;
 			}
-			else if (status == ERequestStatus::Pending)
+			else
 			{
-				pFile->m_state = EStandaloneFileState::Loading;
+				++numPendingInstances;
 			}
-
-			pFile->m_pObject = &object;
-
-#if defined(INCLUDE_AUDIO_PRODUCTION_CODE)
-			pFile->m_triggerId = GetId();
-#endif  // INCLUDE_AUDIO_PRODUCTION_CODE
-
-			object.AddStandaloneFile(pFile, SUserDataBase(pOwner, pUserData, pUserDataOwner));
 		}
-		else
+#if defined(CRY_AUDIO_USE_DEBUG_CODE)
+		else if (result != ETriggerResult::DoNotTrack)
 		{
-#if defined(INCLUDE_AUDIO_PRODUCTION_CODE)
-			Cry::Audio::Log(ELogType::Warning, R"(PlayFile failed with "%s" on object "%s")", pFile->m_hashedFilename.GetText().c_str(), object.m_name.c_str());
-#endif  // INCLUDE_AUDIO_PRODUCTION_CODE
-
-			g_fileManager.ReleaseStandaloneFile(pFile);
+			Cry::Audio::Log(ELogType::Warning, R"(Trigger "%s" failed on object "%s" during %s)", GetName(), globalObject.GetName(), __FUNCTION__);
 		}
+#endif  // CRY_AUDIO_USE_DEBUG_CODE
 	}
+
+	if ((numPlayingInstances > 0) || (numPendingInstances > 0))
+	{
+		globalObject.ConstructTriggerInstance(m_id, numPlayingInstances, numPendingInstances, flags, pOwner, pUserData, pUserDataOwner);
+	}
+	else
+	{
+		// All of the events have either finished before we got here or never started, immediately inform the user that the trigger has finished.
+		SendFinishedTriggerInstanceRequest(m_id, INVALID_ENTITYID, flags, pOwner, pUserData, pUserDataOwner);
+	}
+
+#if defined(CRY_AUDIO_USE_DEBUG_CODE)
+	if (m_connections.empty())
+	{
+		Cry::Audio::Log(ELogType::Warning, R"(Trigger "%s" executed on object "%s" without connections)", GetName(), globalObject.GetName());
+	}
+#endif // CRY_AUDIO_USE_DEBUG_CODE
 }
 
-#if defined(INCLUDE_AUDIO_PRODUCTION_CODE)
 //////////////////////////////////////////////////////////////////////////
-void CTrigger::PlayFile(CObject& object, CStandaloneFile* const pFile) const
+void CTrigger::Stop(Impl::IObject* const pIObject) const
 {
-	CRY_ASSERT_MESSAGE(pFile->m_pImplData == nullptr, "Standalone file impl data survided a middleware switch during %s", __FUNCTION__);
-
-	if (!m_connections.empty())
+	for (auto const pConnection : m_connections)
 	{
-		Impl::ITriggerConnection const* const pITriggerConnection = m_connections[0];
-		pFile->m_pImplData = g_pIImpl->ConstructStandaloneFileConnection(*pFile, pFile->m_hashedFilename.GetText().c_str(), pFile->m_isLocalized, pITriggerConnection);
-		ERequestStatus const status = pFile->m_pImplData->Play(object.GetImplDataPtr());
-
-		if (status == ERequestStatus::Success || status == ERequestStatus::Pending)
-		{
-			if (status == ERequestStatus::Success)
-			{
-				pFile->m_state = EStandaloneFileState::Playing;
-			}
-			else if (status == ERequestStatus::Pending)
-			{
-				pFile->m_state = EStandaloneFileState::Loading;
-			}
-		}
-		else
-		{
-			Cry::Audio::Log(ELogType::Error, R"(PlayFile failed with "%s" on object "%s")", pFile->m_hashedFilename.GetText().c_str(), object.m_name.c_str());
-
-			g_pIImpl->DestructStandaloneFileConnection(pFile->m_pImplData);
-			pFile->m_pImplData = nullptr;
-		}
+		pConnection->Stop(pIObject);
 	}
 }
-#endif // INCLUDE_AUDIO_PRODUCTION_CODE
+
+#if defined(CRY_AUDIO_USE_DEBUG_CODE)
+//////////////////////////////////////////////////////////////////////////
+void CTrigger::Execute(
+	CObject& object,
+	TriggerInstanceId const triggerInstanceId,
+	CTriggerInstance* const pTriggerInstance,
+	uint16 const triggerCounter) const
+{
+	bool isPlaying = false;
+
+	Impl::IObject* const pIObject = object.GetImplDataPtr();
+
+	for (auto const pConnection : m_connections)
+	{
+		ETriggerResult const result = pConnection->Execute(pIObject, triggerInstanceId);
+
+		if ((result == ETriggerResult::Playing) || (result == ETriggerResult::Virtual) || (result == ETriggerResult::Pending))
+		{
+	#if defined(CRY_AUDIO_USE_DEBUG_CODE)
+			pTriggerInstance->SetRadius(m_radius);
+			object.UpdateMaxRadius(m_radius);
+	#endif  // CRY_AUDIO_USE_DEBUG_CODE
+
+			if (result == ETriggerResult::Playing)
+			{
+				pTriggerInstance->IncrementNumPlayingConnectionInstances();
+				isPlaying = true;
+			}
+			else if (result == ETriggerResult::Virtual)
+			{
+				pTriggerInstance->IncrementNumPlayingConnectionInstances();
+			}
+			else
+			{
+				pTriggerInstance->IncrementNumPendingConnectionInstances();
+			}
+		}
+	#if defined(CRY_AUDIO_USE_DEBUG_CODE)
+		else if (result != ETriggerResult::DoNotTrack)
+		{
+			Cry::Audio::Log(ELogType::Warning, R"(Trigger "%s" failed on object "%s" during %s)", GetName(), object.GetName(), __FUNCTION__);
+		}
+	#endif // CRY_AUDIO_USE_DEBUG_CODE
+	}
+
+	if (isPlaying)
+	{
+		object.RemoveFlag(EObjectFlags::Virtual);
+	}
+	else if (triggerCounter == 0)
+	{
+		// If the first trigger is not virtual, the object cannot get set to virtual here afterwards.
+		object.SetFlag(EObjectFlags::Virtual);
+	}
+
+	if (m_connections.empty())
+	{
+		Cry::Audio::Log(ELogType::Warning, R"(Trigger "%s" executed on object "%s" without connections)", GetName(), object.GetName());
+	}
+}
+
+//////////////////////////////////////////////////////////////////////////
+void CTrigger::Execute(
+	CGlobalObject& globalObject,
+	TriggerInstanceId const triggerInstanceId,
+	CTriggerInstance* const pTriggerInstance,
+	uint16 const triggerCounter) const
+{
+	Impl::IObject* const pIObject = globalObject.GetImplDataPtr();
+
+	for (auto const pConnection : m_connections)
+	{
+		ETriggerResult const result = pConnection->Execute(pIObject, triggerInstanceId);
+
+		if ((result == ETriggerResult::Playing) || (result == ETriggerResult::Virtual) || (result == ETriggerResult::Pending))
+		{
+			if (result == ETriggerResult::Playing)
+			{
+				pTriggerInstance->IncrementNumPlayingConnectionInstances();
+
+			}
+			else if (result == ETriggerResult::Virtual)
+			{
+				pTriggerInstance->IncrementNumPlayingConnectionInstances();
+			}
+			else
+			{
+				pTriggerInstance->IncrementNumPendingConnectionInstances();
+			}
+		}
+	#if defined(CRY_AUDIO_USE_DEBUG_CODE)
+		else if (result != ETriggerResult::DoNotTrack)
+		{
+			Cry::Audio::Log(ELogType::Warning, R"(Trigger "%s" failed on object "%s" during %s)", GetName(), globalObject.GetName(), __FUNCTION__);
+		}
+	#endif // CRY_AUDIO_USE_DEBUG_CODE
+	}
+
+	if (m_connections.empty())
+	{
+		Cry::Audio::Log(ELogType::Warning, R"(Trigger "%s" executed on object "%s" without connections)", GetName(), globalObject.GetName());
+	}
+}
+#endif // CRY_AUDIO_USE_DEBUG_CODE
 }      // namespace CryAudio

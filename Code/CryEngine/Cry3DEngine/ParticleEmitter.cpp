@@ -107,7 +107,7 @@ IMaterial* CParticleEmitter::GetMaterial(Vec3*) const
 	return NULL;
 }
 
-float CParticleEmitter::GetMaxViewDist()
+float CParticleEmitter::GetMaxViewDist() const
 {
 	// Max particles/radian, modified by emitter settings.
 	return CParticleManager::Instance()->GetMaxAngularDensity(gEnv->pSystem->GetViewCamera())
@@ -674,7 +674,7 @@ void CParticleEmitter::UpdateFromEntity()
 		SetRndFlags(ERF_CASTSHADOWMAPS, false);
 }
 
-void CParticleEmitter::GetLocalBounds(AABB& bbox)
+void CParticleEmitter::GetLocalBounds(AABB& bbox) const
 {
 	if (!m_bbWorld.IsReset())
 	{
@@ -1213,7 +1213,7 @@ void CParticleEmitter::UpdateStreamingPriority(const SUpdateStreamingPriorityCon
 
 		if (CStatObj* pStatObj = static_cast<CStatObj*>(params.pStatObj.get()))
 		{
-			m_pObjManager->PrecacheStatObj(pStatObj, context.lod, Matrix34A(m_Loc), pStatObj->GetMaterial(),
+			m_pObjManager->PrecacheStatObj(pStatObj, context.lod, pStatObj->GetMaterial(),
 				context.importance, normalizedDist, context.bFullUpdate, params.bDrawNear);
 		}
 	}

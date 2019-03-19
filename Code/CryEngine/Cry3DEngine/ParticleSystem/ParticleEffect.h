@@ -18,7 +18,7 @@ struct SSerializationContext
 
 uint GetVersion(IArchive& ar);
 
-class CParticleEffect : public IParticleEffect
+class CParticleEffect final : public IParticleEffect
 {
 public:
 	CParticleEffect();
@@ -55,8 +55,8 @@ public:
 	virtual int                   FindChild(::IParticleEffect* pEffect) const override               { return -1; }
 	virtual void                  SetParent(::IParticleEffect* pParent) override                     {}
 	virtual IParticleEffect*      GetParent() const override                                         { return 0; }
-	virtual bool                  LoadResources() override                                           { return true; }
-	virtual void                  UnloadResources() override                                         {}
+	virtual bool                  LoadResources() override;
+	virtual void                  UnloadResources() override;
 	virtual void                  Serialize(XmlNodeRef node, bool bLoading, bool bChildren) override {}
 	virtual void                  Reload(bool bChildren) override                                    {}
 	virtual bool                  IsSubstitutedPfx1() const override                                 { return m_substitutedPfx1; }
